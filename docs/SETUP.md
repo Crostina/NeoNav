@@ -246,3 +246,59 @@ Before increasing speed, first verify:
 
 Saved runs in `test_results/` and `debug_runs/` document the tuning process used
 for the current baseline.
+
+## 9. Pixhawk Yaw Input
+
+The prototype Pixhawk is connected from TELEM2 to the Raspberry Pi UART:
+
+| Pixhawk TELEM2 | Raspberry Pi |
+| --- | --- |
+| TX | RXD / GPIO15 / physical pin 10 |
+| RX | TXD / GPIO14 / physical pin 8 |
+| GND | GND |
+
+Do not connect Pixhawk 5V to the Raspberry Pi 5V rail unless the power
+architecture has been checked. The UART signal level must be 3.3 V.
+
+The Pi UART should be enabled and free from login-console use:
+
+```bash
+ls -l /dev/serial0
+systemctl is-active serial-getty@ttyAMA0.service serial-getty@serial0.service
+```
+
+Expected on the current Pi:
+
+```text
+/dev/serial0 -> ttyAMA0
+inactive
+inactive
+```
+
+Probe the Pixhawk:
+
+```bash
+python3 tools/pixhawk_mavlink_yaw_probe.py --port /dev/serial0 --baud 115200 --seconds 8
+```
+
+Known-good result from the prototype:
+
+```text
+ATTITUDE yaw ~= -9.7 deg
+GLOBAL_POSITION_INT heading ~= 350.3 deg
+ATTITUDE rate ~= 10 Hz
+```
+
+This is integrable into odometry, but the yaw must be treated carefully:
+
+- Pixhawk yaw is an attitude estimate, usually absolute or compass-referenced.
+- Wheel odometry yaw is local and starts wherever the robot was when odom was
+  cleared.
+- The bridge should store a yaw offset when odometry is cleared:
+  `local_yaw = normalize(pixhawk_yaw - pixhawk_yaw_at_origin)`.
+- For the first integration, use Pixhawk yaw only to correct heading in the
+  Pi-side odometry/TF, while keeping ESP32 wheel odometry for `x`, `y`, and
+  linear speed.
+- The more standard ROS 2 solution is to publish Pixhawk IMU/yaw and fuse it
+  with wheel odometry using `robot_localization` EKF, producing the final
+  `/odom` used by Nav2.

@@ -147,6 +147,16 @@ Start here for a clean setup:
 - [Setup Guide](docs/SETUP.md)
 - [Bring-Up Notes](docs/EUROBOOT_BRINGUP.md)
 
+Pixhawk yaw probe:
+
+```bash
+python3 tools/pixhawk_mavlink_yaw_probe.py --port /dev/serial0 --baud 115200
+```
+
+On the prototype, Pixhawk TELEM2 is readable on the Raspberry Pi UART as
+MAVLink 2 at `115200` baud. The probe decodes `ATTITUDE` yaw and
+`GLOBAL_POSITION_INT` heading without requiring `pymavlink`.
+
 Useful diagnostics:
 
 ```bash
