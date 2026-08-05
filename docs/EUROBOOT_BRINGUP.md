@@ -28,9 +28,11 @@ The Pi now has a helper script in the maker home folder:
 ~/start_euroboot.sh stop
 ```
 
-The script starts the micro-ROS agent, the dashboard bridge, and Nav2 in the
-right order. It waits briefly for `/odom/unfiltered` before starting Nav2 so
-the bridge can publish `odom -> base_footprint` TF before Nav2 activates.
+The script starts the micro-ROS agent first, resets the ESP32 while the agent is
+already listening, waits for `/odom/unfiltered`, starts the dashboard bridge,
+waits for `odom -> base_footprint` TF, then starts Nav2. This avoids the common
+half-started state where the ESP32 is online late but Nav2 has already failed
+activation.
 
 Manual bring-up is still possible. First make sure the normal robot stack is
 running on the Pi:
