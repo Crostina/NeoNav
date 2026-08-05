@@ -600,13 +600,7 @@ class DashboardBridge(Node):
             self.pixhawk_reader.update_port(new_port, new_baud)
 
         with self.lock:
-            if self.encoder_pose is not None:
-                self.encoder_origin_yaw = self.encoder_pose.yaw
-            pixhawk_yaw, _age, pixhawk_gyro_yaw = self.pixhawk_reader.get()
-            self.pixhawk_origin_yaw = self.selected_pixhawk_yaw(pixhawk_yaw, pixhawk_gyro_yaw)
-            if self.raw_pose is not None:
-                self.origin = Pose2D(self.raw_pose.x, self.raw_pose.y, self.raw_pose.yaw)
-                self.fused_origin_yaw = self.raw_pose.yaw
+            self.rebase_origin_locked()
 
         self.broadcast({"type": "imu", "imu": self.imu_settings})
         mode = "Pixhawk yaw fusion enabled" if self.imu_settings["use_pixhawk_yaw"] else "encoder yaw only"
@@ -720,15 +714,43 @@ class DashboardBridge(Node):
 
     def reset_local_origin(self) -> None:
         with self.lock:
-            if self.raw_pose is not None:
-                self.origin = Pose2D(self.raw_pose.x, self.raw_pose.y, self.raw_pose.yaw)
-                self.fused_origin_yaw = self.raw_pose.yaw
-            if self.encoder_pose is not None:
-                self.encoder_origin_yaw = self.encoder_pose.yaw
-            pixhawk_yaw, _age, pixhawk_gyro_yaw = self.pixhawk_reader.get()
-            self.pixhawk_origin_yaw = self.selected_pixhawk_yaw(pixhawk_yaw, pixhawk_gyro_yaw)
+            self.rebase_origin_locked()
         self.get_logger().info("dashboard odom origin reset")
         self.broadcast({"type": "status", "level": "info", "message": "dashboard odom origin reset"})
+
+    def rebase_origin_locked(self) -> None:
+        """Reset local odom while keeping encoder x/y and yaw in one frame.
+
+        The ESP32 publishes x/y integrated in its encoder odom frame. Pixhawk yaw
+        is useful as a relative heading correction, but its absolute angle must
+        not become the global yaw for those encoder x/y coordinates after a
+        dashboard reset. Otherwise local waypoints are rotated into the wrong
+        raw frame when the Pixhawk and encoder absolute yaw differ.
+        """
+        if self.encoder_pose is not None:
+            x = self.encoder_pose.x
+            y = self.encoder_pose.y
+            yaw = self.encoder_pose.yaw
+            self.encoder_origin_yaw = yaw
+        elif self.raw_pose is not None:
+            x = self.raw_pose.x
+            y = self.raw_pose.y
+            yaw = self.raw_pose.yaw
+            self.encoder_origin_yaw = yaw
+        else:
+            return
+
+        if self.raw_pose is not None:
+            mismatch = abs(normalize_angle(self.raw_pose.yaw - yaw))
+            if mismatch > 0.35:
+                self.get_logger().warn(
+                    f"rebasing odom with fused/encoder yaw mismatch={math.degrees(mismatch):.1f} deg"
+                )
+
+        self.origin = Pose2D(x, y, yaw)
+        self.fused_origin_yaw = yaw
+        pixhawk_yaw, _age, pixhawk_gyro_yaw = self.pixhawk_reader.get()
+        self.pixhawk_origin_yaw = self.selected_pixhawk_yaw(pixhawk_yaw, pixhawk_gyro_yaw)
 
     def start_mission(self, waypoints: list[Any]) -> None:
         if not waypoints:

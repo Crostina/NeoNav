@@ -340,6 +340,9 @@ This is integrable into odometry, but the yaw must be treated carefully:
 - The tested dashboard default is Pixhawk gyro-integrated yaw with sign `-1`,
   weighted `0.8`, plus encoder yaw weighted `0.2`. Uncheck `Use Pixhawk yaw` to
   return to encoder-only heading.
+- `Clear Odom` rebases the fused yaw frame to the current encoder yaw, then
+  uses Pixhawk yaw only as a relative change. This keeps encoder `x/y` and fused
+  heading in the same local frame for Nav2 paths.
 - Geometry changes from the dashboard now affect the bridge-published `/odom`
   scaling and TF immediately. ESP32 control constants still require firmware
   rebuild/upload until a runtime firmware config service is added.
