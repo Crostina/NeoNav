@@ -53,16 +53,16 @@ FIRMWARE_WHEEL_BASE_M = 0.15216
 FIRMWARE_COUNTS_PER_REV = 1400
 
 NAV2_PARAM_DEFAULTS = {
-    "desired_linear_vel": 0.24,
-    "lookahead_dist": 0.15,
-    "min_lookahead_dist": 0.08,
-    "max_lookahead_dist": 0.32,
-    "lookahead_time": 0.45,
+    "desired_linear_vel": 0.28,
+    "lookahead_dist": 0.20,
+    "min_lookahead_dist": 0.10,
+    "max_lookahead_dist": 0.40,
+    "lookahead_time": 0.50,
     "min_approach_linear_velocity": 0.05,
-    "approach_velocity_scaling_dist": 0.20,
-    "regulated_linear_scaling_min_radius": 0.32,
-    "regulated_linear_scaling_min_speed": 0.05,
-    "max_angular_accel": 3.40,
+    "approach_velocity_scaling_dist": 0.30,
+    "regulated_linear_scaling_min_radius": 0.36,
+    "regulated_linear_scaling_min_speed": 0.055,
+    "max_angular_accel": 3.30,
     "xy_goal_tolerance": 0.05,
     "yaw_goal_tolerance": 6.28,
 }
@@ -96,6 +96,7 @@ NAV2_PARAM_TARGETS = {
 PRETURN_HEADING_ERROR_RAD = 1.20
 PRETURN_MIN_DISTANCE_M = 0.08
 WAYPOINT_GUARD_TOLERANCE_M = 0.08
+FINAL_POSITION_GUARD_TOLERANCE_M = 0.055
 
 
 def normalize_angle(angle: float) -> float:
@@ -842,6 +843,35 @@ class DashboardBridge(Node):
                     self.get_logger().error(f"mission failed: final alignment at waypoint {index} timed out")
                     self.broadcast({"type": "mission_status", "state": "error", "message": f"final alignment at waypoint {index} timed out"})
                     return
+                if self.distance_to_raw_target(raw_final) > FINAL_POSITION_GUARD_TOLERANCE_M:
+                    with self.lock:
+                        raw_start = self.raw_pose or raw_final
+                        raw_final = self.local_to_raw_locked(Pose2D(local_wp.x, local_wp.y, local_wp.final_yaw))
+                    correction_goal = FollowPath.Goal()
+                    correction_goal.path = self.make_straight_path(raw_start, raw_final)
+                    correction_goal.controller_id = "FollowPath"
+                    correction_goal.goal_checker_id = "goal_checker"
+                    correction_goal.progress_checker_id = "progress_checker"
+                    self.broadcast(
+                        {
+                            "type": "mission_status",
+                            "state": "navigating",
+                            "index": index,
+                            "total": len(waypoints),
+                            "message": f"correcting final position at waypoint {index}/{len(waypoints)}",
+                        }
+                    )
+                    if not self.follow_waypoint(
+                        correction_goal,
+                        raw_final,
+                        index,
+                        len(waypoints),
+                        guard_tolerance=FINAL_POSITION_GUARD_TOLERANCE_M,
+                    ):
+                        return
+                    with self.lock:
+                        raw_final = self.local_to_raw_locked(Pose2D(local_wp.x, local_wp.y, local_wp.final_yaw))
+                    self.rotate_to_heading(raw_final.yaw)
 
             self.broadcast(
                 {
@@ -857,7 +887,14 @@ class DashboardBridge(Node):
         self.get_logger().info("mission complete")
         self.broadcast({"type": "mission_status", "state": "done", "message": "mission complete"})
 
-    def follow_waypoint(self, goal: FollowPath.Goal, target: Pose2D, index: int, total: int) -> bool:
+    def follow_waypoint(
+        self,
+        goal: FollowPath.Goal,
+        target: Pose2D,
+        index: int,
+        total: int,
+        guard_tolerance: float = WAYPOINT_GUARD_TOLERANCE_M,
+    ) -> bool:
         for attempt in range(1, 3):
             send_future = self.nav_client.send_goal_async(goal)
             handle = self.wait_for_future(send_future, timeout_s=10.0)
@@ -885,7 +922,7 @@ class DashboardBridge(Node):
                 return False
 
             distance = self.distance_to_raw_target(target)
-            if distance <= WAYPOINT_GUARD_TOLERANCE_M:
+            if distance <= guard_tolerance:
                 return True
 
             self.get_logger().warn(
@@ -921,7 +958,7 @@ class DashboardBridge(Node):
         return math.hypot(target.x - pose.x, target.y - pose.y)
 
     def rotate_to_heading(self, target_yaw: float) -> bool:
-        deadline = time.monotonic() + 7.0
+        deadline = time.monotonic() + 9.0
         stable_count = 0
         last_error = math.pi
         while rclpy.ok() and time.monotonic() < deadline and not self.cancel_requested:
@@ -946,7 +983,7 @@ class DashboardBridge(Node):
                 stable_count = 0
 
             cmd = Twist()
-            angular = max(0.45, min(2.20, abs(error) * 3.2))
+            angular = max(0.18, min(1.15, abs(error) * 1.8))
             cmd.angular.z = math.copysign(angular, error)
             self.cmd_pub.publish(cmd)
             time.sleep(0.03)

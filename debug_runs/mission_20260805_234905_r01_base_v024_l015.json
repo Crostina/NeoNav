@@ -1,0 +1,73 @@
+{
+  "created_at": "2026-08-05T23:49:05",
+  "csv": "C:\\Users\\Golde\\Documents\\PlatformIO\\Projects\\EUROBOOT\\debug_runs\\mission_20260805_234905_r01_base_v024_l015.csv",
+  "finished_at": "2026-08-05T23:50:20",
+  "host": "192.168.137.217",
+  "imu": {
+    "encoder_weight": 0.2,
+    "pixhawk_weight": 0.8,
+    "pixhawk_yaw_mode": "gyro",
+    "pixhawk_yaw_sign": -1.0,
+    "use_pixhawk_yaw": true
+  },
+  "label": "r01_base_v024_l015",
+  "metrics": {
+    "duration_s": 70.625,
+    "final_pos_error_m": 0.1071,
+    "final_x_m": 0.03321323371790245,
+    "final_y_m": 0.09680493035371397,
+    "final_yaw_deg": -7.18,
+    "final_yaw_error_deg": 7.18,
+    "jump_samples": 297,
+    "manual_intervention_suspected": true,
+    "max_cross_track_m": 0.0804,
+    "mean_cross_track_m": 0.0407,
+    "oscillation_sign_changes": 33,
+    "score": 127.794,
+    "status": "done",
+    "stop_samples": 150,
+    "valid": false
+  },
+  "mission": [
+    {
+      "final_yaw": null,
+      "x": 0.754,
+      "y": 0.733,
+      "yaw": 0.7712767080693126
+    },
+    {
+      "final_yaw": null,
+      "x": 1.504,
+      "y": 0.002,
+      "yaw": -0.7725696976885629
+    },
+    {
+      "final_yaw": null,
+      "x": 0.746,
+      "y": -0.51,
+      "yaw": -2.54752584299694
+    },
+    {
+      "final_yaw": 0.0,
+      "x": -0.008,
+      "y": -0.002,
+      "yaw": 2.5487090637889245
+    }
+  ],
+  "nav2": {
+    "approach_velocity_scaling_dist": 0.2,
+    "desired_linear_vel": 0.24,
+    "lookahead_dist": 0.15,
+    "lookahead_time": 0.45,
+    "max_angular_accel": 3.4,
+    "max_lookahead_dist": 0.32,
+    "min_approach_linear_velocity": 0.05,
+    "min_lookahead_dist": 0.08,
+    "regulated_linear_scaling_min_radius": 0.32,
+    "regulated_linear_scaling_min_speed": 0.05,
+    "xy_goal_tolerance": 0.05,
+    "yaw_goal_tolerance": 6.28
+  },
+  "port": 8765,
+  "status": "done"
+}

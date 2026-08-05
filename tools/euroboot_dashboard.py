@@ -29,16 +29,16 @@ DASHBOARD_SETTINGS_PATH = PROJECT_ROOT / "config" / "euroboot_dashboard_settings
 DEBUG_DIR = PROJECT_ROOT / "debug_runs"
 
 DEFAULT_NAV2_PARAMS = {
-    "desired_linear_vel": 0.24,
-    "lookahead_dist": 0.15,
-    "min_lookahead_dist": 0.08,
-    "max_lookahead_dist": 0.32,
-    "lookahead_time": 0.45,
+    "desired_linear_vel": 0.28,
+    "lookahead_dist": 0.20,
+    "min_lookahead_dist": 0.10,
+    "max_lookahead_dist": 0.40,
+    "lookahead_time": 0.50,
     "min_approach_linear_velocity": 0.05,
-    "approach_velocity_scaling_dist": 0.20,
-    "regulated_linear_scaling_min_radius": 0.32,
-    "regulated_linear_scaling_min_speed": 0.05,
-    "max_angular_accel": 3.40,
+    "approach_velocity_scaling_dist": 0.30,
+    "regulated_linear_scaling_min_radius": 0.36,
+    "regulated_linear_scaling_min_speed": 0.055,
+    "max_angular_accel": 3.30,
     "xy_goal_tolerance": 0.05,
     "yaw_goal_tolerance": 6.28,
 }

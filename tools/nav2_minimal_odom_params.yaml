@@ -37,24 +37,24 @@ controller_server:
       stateful: false
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 0.24
-      lookahead_dist: 0.15
-      min_lookahead_dist: 0.08
-      max_lookahead_dist: 0.32
-      lookahead_time: 0.45
+      desired_linear_vel: 0.28
+      lookahead_dist: 0.20
+      min_lookahead_dist: 0.10
+      max_lookahead_dist: 0.40
+      lookahead_time: 0.50
       transform_tolerance: 0.3
       use_velocity_scaled_lookahead_dist: true
       min_approach_linear_velocity: 0.05
-      approach_velocity_scaling_dist: 0.20
+      approach_velocity_scaling_dist: 0.30
       use_interpolation: true
       use_regulated_linear_velocity_scaling: true
-      regulated_linear_scaling_min_radius: 0.32
-      regulated_linear_scaling_min_speed: 0.05
+      regulated_linear_scaling_min_radius: 0.36
+      regulated_linear_scaling_min_speed: 0.055
       use_cost_regulated_linear_velocity_scaling: false
       use_collision_detection: false
       use_rotate_to_heading: false
       allow_reversing: false
-      max_angular_accel: 3.4
+      max_angular_accel: 3.3
       max_robot_pose_search_dist: 1.5
       xy_goal_tolerance: 0.05
       stateful: false

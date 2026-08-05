@@ -34,13 +34,16 @@ Motor and encoder pinout:
 | Right L293D IN3 | 33 |
 | Right L293D IN4 | 27 |
 
-Current geometry is stored in `config/custom/euroboot_esp32_config.h` and the
-dashboard settings file:
+Firmware geometry is stored in `config/custom/euroboot_esp32_config.h`:
 
 - wheel diameter: `0.04586 m`
 - wheel distance / track width: `0.15216 m`
 - encoder CPR: `1400`
 - configured max wheel speed: `315 rpm`
+
+The current Pi/dashboard runtime odometry scale uses wheel diameter `0.04 m`,
+track width `0.15216 m`, encoder CPR `1400`, and max wheel speed `315 rpm`.
+That runtime value is what was used for the latest field tuning runs.
 
 ## Architecture
 
@@ -88,6 +91,7 @@ The Windows dashboard runs without ROS installed and talks only to the Pi bridge
 - `tools/euroboot_dashboard.py` - Windows Tkinter dashboard
 - `tools/euroboot_ros_bridge.py` - Pi TCP-to-ROS bridge and mission runner
 - `tools/field_test_client.py` - scripted one-shot field test logger
+- `tools/mission_tune_runner.py` - scripted 4-waypoint mission tuner/logger
 - `tools/start_euroboot_pi.sh` - one-command Pi bring-up helper
 - `tools/nav2_minimal_odom_*.py|yaml` - minimal Nav2 launch and tuning
 - `tools/esp32_*` - motor/encoder calibration and isolation tests
@@ -195,6 +199,12 @@ The phase-one stack is working on the small prototype:
 - dashboard receives live odometry and can clear its local odom origin
 - Nav2 FollowPath can execute waypoint missions in a small test area
 - debug runs can be saved for later analysis
+
+The current field baseline was selected from a 15-run 4-waypoint tuning session.
+Best saved run: `debug_runs/mission_20260806_000727_r12_best_earlier_approach.*`.
+The tuned Nav2 profile uses `0.28 m/s` desired speed, `0.20 m` lookahead,
+`0.30 m` approach scaling distance, and Pixhawk gyro yaw fused at `0.8` with
+encoder yaw at `0.2`.
 
 The prototype is still limited by cheap motors, the L293D driver, wheel slip,
 chassis imbalance, and geometry mismatch. Future upgrades should include better

@@ -247,6 +247,42 @@ Before increasing speed, first verify:
 Saved runs in `test_results/` and `debug_runs/` document the tuning process used
 for the current baseline.
 
+The repeatable field-tuning mission is scripted:
+
+```powershell
+python tools\mission_tune_runner.py --host <pi-ip> --label my_test --timeout 70 --pause-after 8
+```
+
+It sends this 4-waypoint path:
+
+```text
+1: x=0.754 y=0.733
+2: x=1.504 y=0.002
+3: x=0.746 y=-0.510
+4: x=-0.008 y=-0.002 final yaw=0 deg
+```
+
+Each run writes a CSV and JSON into `debug_runs/`, including final error,
+cross-track error, stop samples, oscillation count, and the Nav2/IMU parameters
+used. The current best baseline is:
+
+```text
+runtime wheel_diameter_m=0.04
+runtime wheel_base_m=0.15216
+desired_linear_vel=0.28
+lookahead_dist=0.20
+min_lookahead_dist=0.10
+max_lookahead_dist=0.40
+lookahead_time=0.50
+min_approach_linear_velocity=0.05
+approach_velocity_scaling_dist=0.30
+regulated_linear_scaling_min_radius=0.36
+regulated_linear_scaling_min_speed=0.055
+max_angular_accel=3.30
+xy_goal_tolerance=0.05
+yaw_goal_tolerance=6.28
+```
+
 ## 9. Pixhawk Yaw Input
 
 The prototype Pixhawk is connected from TELEM2 to the Raspberry Pi UART:
