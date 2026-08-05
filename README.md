@@ -67,6 +67,11 @@ The ESP32 is the low-level realtime controller. It subscribes to `/cmd_vel`,
 converts robot velocity to left/right wheel RPM, runs one PI controller per
 wheel, drives the L293D, and publishes `/odom/unfiltered` at about 50 Hz.
 
+The Pi bridge publishes the Nav2-facing `/odom` and `odom -> base_footprint` TF.
+By default, `/odom` keeps encoder x/y distance but fuses yaw as `80%` Pixhawk
+MAVLink ATTITUDE yaw and `20%` encoder yaw. The dashboard can switch back to
+encoder-only yaw at runtime.
+
 The Raspberry Pi runs:
 
 - `micro_ros_agent` for the ESP32 serial link

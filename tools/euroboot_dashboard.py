@@ -43,6 +43,15 @@ DEFAULT_NAV2_PARAMS = {
     "yaw_goal_tolerance": 6.28,
 }
 
+DEFAULT_IMU_SETTINGS = {
+    "use_pixhawk_yaw": True,
+    "pixhawk_weight": 0.80,
+    "encoder_weight": 0.20,
+    "pixhawk_port": "/dev/serial0",
+    "pixhawk_baud": 115200,
+    "pixhawk_timeout_s": 0.75,
+}
+
 
 def read_define(name: str, default: float) -> float:
     if not CONFIG_PATH.exists():
@@ -204,6 +213,11 @@ class EurobootDashboard:
             key: float(saved_nav2.get(key, value))
             for key, value in DEFAULT_NAV2_PARAMS.items()
         }
+        saved_imu = self.settings.get("imu", {})
+        self.imu_settings = {
+            key: saved_imu.get(key, value)
+            for key, value in DEFAULT_IMU_SETTINGS.items()
+        }
         self.pose = RobotPose()
         self.trail: list[tuple[float, float]] = [(0.0, 0.0)]
         self.waypoints: list[Waypoint] = []
@@ -213,6 +227,7 @@ class EurobootDashboard:
 
         self.add_waypoint_mode = tk.BooleanVar(value=True)
         self.save_debug_var = tk.BooleanVar(value=bool(self.settings.get("save_debug", False)))
+        self.use_pixhawk_yaw_var = tk.BooleanVar(value=bool(self.imu_settings.get("use_pixhawk_yaw", True)))
         self.scale_px_per_m = tk.DoubleVar(value=260.0)
         self.status_text = tk.StringVar(value="Offline. Start the Pi bridge, then connect.")
         self.connection_text = tk.StringVar(value="Disconnected")
@@ -244,6 +259,11 @@ class EurobootDashboard:
             "nav2_max_angular_accel": tk.StringVar(value=f"{self.nav2_params['max_angular_accel']:.3f}"),
             "nav2_xy_goal_tolerance": tk.StringVar(value=f"{self.nav2_params['xy_goal_tolerance']:.3f}"),
             "nav2_yaw_goal_tolerance": tk.StringVar(value=f"{self.nav2_params['yaw_goal_tolerance']:.3f}"),
+            "imu_pixhawk_weight": tk.StringVar(value=f"{float(self.imu_settings.get('pixhawk_weight', 0.8)):.2f}"),
+            "imu_encoder_weight": tk.StringVar(value=f"{float(self.imu_settings.get('encoder_weight', 0.2)):.2f}"),
+            "imu_port": tk.StringVar(value=str(self.imu_settings.get("pixhawk_port", "/dev/serial0"))),
+            "imu_baud": tk.StringVar(value=str(self.imu_settings.get("pixhawk_baud", 115200))),
+            "imu_timeout": tk.StringVar(value=f"{float(self.imu_settings.get('pixhawk_timeout_s', 0.75)):.2f}"),
             "pose_x": tk.StringVar(value="0.000"),
             "pose_y": tk.StringVar(value="0.000"),
             "pose_yaw": tk.StringVar(value="0.0"),
@@ -352,55 +372,73 @@ class EurobootDashboard:
         self.geometry_summary = tk.StringVar()
         ttk.Label(side, textvariable=self.geometry_summary, style="Small.TLabel", justify="left").grid(row=17, column=0, sticky="ew", pady=(0, 14))
 
-        self._section(side, 18, "Nav2 Tight-Box Tune")
-        self._field(side, 19, "Speed (m/s)", "nav2_desired_linear_vel", command=self.apply_nav2_params_local)
-        self._field(side, 20, "Lookahead (m)", "nav2_lookahead_dist", command=self.apply_nav2_params_local)
-        self._field(side, 21, "Min lookahead (m)", "nav2_min_lookahead_dist", command=self.apply_nav2_params_local)
-        self._field(side, 22, "Max lookahead (m)", "nav2_max_lookahead_dist", command=self.apply_nav2_params_local)
-        self._field(side, 23, "Lookahead time (s)", "nav2_lookahead_time", command=self.apply_nav2_params_local)
-        self._field(side, 24, "Approach speed", "nav2_min_approach_linear_velocity", command=self.apply_nav2_params_local)
-        self._field(side, 25, "Approach dist", "nav2_approach_velocity_scaling_dist", command=self.apply_nav2_params_local)
-        self._field(side, 26, "Turn radius scale", "nav2_regulated_linear_scaling_min_radius", command=self.apply_nav2_params_local)
-        self._field(side, 27, "Min turn speed", "nav2_regulated_linear_scaling_min_speed", command=self.apply_nav2_params_local)
-        self._field(side, 28, "Angular accel", "nav2_max_angular_accel", command=self.apply_nav2_params_local)
-        self._field(side, 29, "XY tolerance", "nav2_xy_goal_tolerance", command=self.apply_nav2_params_local)
-        self._field(side, 30, "Yaw tolerance", "nav2_yaw_goal_tolerance", command=self.apply_nav2_params_local)
+        self._section(side, 18, "Yaw Source")
+        ttk.Checkbutton(
+            side,
+            text="Use Pixhawk yaw",
+            variable=self.use_pixhawk_yaw_var,
+            command=self.apply_imu_settings_local,
+        ).grid(row=19, column=0, sticky="w")
+        self._field(side, 20, "Pixhawk weight", "imu_pixhawk_weight", command=self.apply_imu_settings_local)
+        self._field(side, 21, "Encoder weight", "imu_encoder_weight", command=self.apply_imu_settings_local)
+        self._field(side, 22, "Pixhawk port", "imu_port", command=self.apply_imu_settings_local)
+        self._field(side, 23, "Pixhawk baud", "imu_baud", command=self.apply_imu_settings_local)
+        self._field(side, 24, "Timeout (s)", "imu_timeout", command=self.apply_imu_settings_local)
+        imu_buttons = ttk.Frame(side)
+        imu_buttons.grid(row=25, column=0, sticky="ew", pady=(8, 12))
+        imu_buttons.columnconfigure((0, 1), weight=1)
+        ttk.Button(imu_buttons, text="80/20 Defaults", command=self.load_default_imu_settings).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ttk.Button(imu_buttons, text="Apply To Robot", command=self.apply_imu_settings_to_robot).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+
+        self._section(side, 26, "Nav2 Tight-Box Tune")
+        self._field(side, 27, "Speed (m/s)", "nav2_desired_linear_vel", command=self.apply_nav2_params_local)
+        self._field(side, 28, "Lookahead (m)", "nav2_lookahead_dist", command=self.apply_nav2_params_local)
+        self._field(side, 29, "Min lookahead (m)", "nav2_min_lookahead_dist", command=self.apply_nav2_params_local)
+        self._field(side, 30, "Max lookahead (m)", "nav2_max_lookahead_dist", command=self.apply_nav2_params_local)
+        self._field(side, 31, "Lookahead time (s)", "nav2_lookahead_time", command=self.apply_nav2_params_local)
+        self._field(side, 32, "Approach speed", "nav2_min_approach_linear_velocity", command=self.apply_nav2_params_local)
+        self._field(side, 33, "Approach dist", "nav2_approach_velocity_scaling_dist", command=self.apply_nav2_params_local)
+        self._field(side, 34, "Turn radius scale", "nav2_regulated_linear_scaling_min_radius", command=self.apply_nav2_params_local)
+        self._field(side, 35, "Min turn speed", "nav2_regulated_linear_scaling_min_speed", command=self.apply_nav2_params_local)
+        self._field(side, 36, "Angular accel", "nav2_max_angular_accel", command=self.apply_nav2_params_local)
+        self._field(side, 37, "XY tolerance", "nav2_xy_goal_tolerance", command=self.apply_nav2_params_local)
+        self._field(side, 38, "Yaw tolerance", "nav2_yaw_goal_tolerance", command=self.apply_nav2_params_local)
         nav2_buttons = ttk.Frame(side)
-        nav2_buttons.grid(row=31, column=0, sticky="ew", pady=(8, 12))
+        nav2_buttons.grid(row=39, column=0, sticky="ew", pady=(8, 12))
         nav2_buttons.columnconfigure((0, 1), weight=1)
         ttk.Button(nav2_buttons, text="Tight Defaults", command=self.load_tight_nav2_defaults).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ttk.Button(nav2_buttons, text="Apply To Robot", command=self.apply_nav2_params_to_robot).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
-        self._section(side, 32, "Live Pose")
-        self._field(side, 33, "x (m)", "pose_x")
-        self._field(side, 34, "y (m)", "pose_y")
-        self._field(side, 35, "yaw (deg)", "pose_yaw")
-        ttk.Label(side, textvariable=self.speed_text, style="Small.TLabel").grid(row=36, column=0, sticky="w", pady=(2, 14))
+        self._section(side, 40, "Live Pose")
+        self._field(side, 41, "x (m)", "pose_x")
+        self._field(side, 42, "y (m)", "pose_y")
+        self._field(side, 43, "yaw (deg)", "pose_yaw")
+        ttk.Label(side, textvariable=self.speed_text, style="Small.TLabel").grid(row=44, column=0, sticky="w", pady=(2, 14))
 
-        self._section(side, 37, "Waypoints")
-        ttk.Checkbutton(side, text="Click map to add waypoint", variable=self.add_waypoint_mode).grid(row=38, column=0, sticky="w", pady=(2, 8))
+        self._section(side, 45, "Waypoints")
+        ttk.Checkbutton(side, text="Click map to add waypoint", variable=self.add_waypoint_mode).grid(row=46, column=0, sticky="w", pady=(2, 8))
         waypoint_buttons = ttk.Frame(side)
-        waypoint_buttons.grid(row=39, column=0, sticky="ew")
+        waypoint_buttons.grid(row=47, column=0, sticky="ew")
         waypoint_buttons.columnconfigure((0, 1), weight=1)
         ttk.Button(waypoint_buttons, text="Clear", command=self.clear_waypoints).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ttk.Button(waypoint_buttons, text="1m Demo", command=self.load_demo_path).grid(row=0, column=1, sticky="ew", padx=(4, 0))
         self.waypoint_list = tk.Listbox(side, height=6, activestyle="dotbox")
-        self.waypoint_list.grid(row=40, column=0, sticky="ew", pady=(10, 14))
+        self.waypoint_list.grid(row=48, column=0, sticky="ew", pady=(10, 14))
         self.waypoint_list.bind("<<ListboxSelect>>", self.on_waypoint_select)
 
-        self._section(side, 41, "Selected Point")
-        self._waypoint_field(side, 42, "x (m)", "waypoint_x")
-        self._waypoint_field(side, 43, "y (m)", "waypoint_y")
-        self._waypoint_field(side, 44, "Final theta deg", "waypoint_theta")
+        self._section(side, 49, "Selected Point")
+        self._waypoint_field(side, 50, "x (m)", "waypoint_x")
+        self._waypoint_field(side, 51, "y (m)", "waypoint_y")
+        self._waypoint_field(side, 52, "Final theta deg", "waypoint_theta")
         selected_buttons = ttk.Frame(side)
-        selected_buttons.grid(row=45, column=0, sticky="ew", pady=(8, 14))
+        selected_buttons.grid(row=53, column=0, sticky="ew", pady=(8, 14))
         selected_buttons.columnconfigure((0, 1), weight=1)
         ttk.Button(selected_buttons, text="Update Selected", command=self.update_selected_waypoint).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ttk.Button(selected_buttons, text="Delete Selected", command=self.delete_selected_waypoint).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
-        self._section(side, 46, "Heading")
+        self._section(side, 54, "Heading")
         self.heading_canvas = tk.Canvas(side, width=188, height=188, background="#f6f7f9", highlightthickness=0)
-        self.heading_canvas.grid(row=47, column=0, pady=(4, 0))
+        self.heading_canvas.grid(row=55, column=0, pady=(4, 0))
 
     def _section(self, parent: ttk.Frame, row: int, title: str) -> None:
         ttk.Label(parent, text=title, font=("Segoe UI", 11, "bold")).grid(row=row, column=0, sticky="w", pady=(0, 6))
@@ -443,6 +481,7 @@ class EurobootDashboard:
         self.connection_text.set("Connected")
         self.status_text.set("Connected to Pi bridge. Waiting for live odometry.")
         self.apply_geometry_to_robot(silent=True)
+        self.apply_imu_settings_to_robot(silent=True)
         self.apply_nav2_params_to_robot(silent=True)
 
     def disconnect_bridge(self) -> None:
@@ -477,6 +516,11 @@ class EurobootDashboard:
                 if isinstance(params, dict):
                     self.set_nav2_vars(params)
                     self.status_text.set("Robot Nav2 parameters confirmed.")
+            elif kind == "imu":
+                imu = message.get("imu", {})
+                if isinstance(imu, dict):
+                    self.set_imu_vars(imu)
+                    self.status_text.set("Robot yaw source confirmed.")
             elif kind == "odom":
                 self.pose = RobotPose(float(message["x"]), float(message["y"]), float(message["yaw"]))
                 self.vars["pose_x"].set(f"{self.pose.x_m:.3f}")
@@ -484,7 +528,8 @@ class EurobootDashboard:
                 self.vars["pose_yaw"].set(f"{math.degrees(self.pose.yaw_rad):.1f}")
                 self.speed_text.set(
                     f"vx={float(message.get('linear_x', 0.0)):.3f} m/s   "
-                    f"wz={float(message.get('angular_z', 0.0)):.3f} rad/s"
+                    f"wz={float(message.get('angular_z', 0.0)):.3f} rad/s   "
+                    f"yaw={message.get('yaw_source', 'encoder')}"
                 )
                 if not self.trail or math.hypot(self.pose.x_m - self.trail[-1][0], self.pose.y_m - self.trail[-1][1]) > 0.003:
                     self.trail.append((self.pose.x_m, self.pose.y_m))
@@ -607,6 +652,69 @@ class EurobootDashboard:
         if not silent:
             self.status_text.set("Nav2 tune sent to robot.")
 
+    def apply_imu_settings_local(self) -> None:
+        try:
+            imu = self.imu_payload()
+        except ValueError:
+            self.status_text.set("Yaw source settings contain an invalid number.")
+            return
+        self.imu_settings = imu
+        self.save_settings()
+        self.status_text.set("Yaw source settings saved locally.")
+
+    def apply_imu_settings_to_robot(self, silent: bool = False) -> None:
+        try:
+            imu = self.imu_payload()
+        except ValueError:
+            if not silent:
+                self.status_text.set("Yaw source settings contain an invalid number.")
+            return
+        self.imu_settings = imu
+        self.save_settings()
+        if not self.bridge.connected:
+            if not silent:
+                self.status_text.set("Yaw source saved locally. Connect bridge to apply on robot.")
+            return
+        try:
+            self.bridge.send({"type": "set_imu", "imu": imu})
+        except RuntimeError as exc:
+            if not silent:
+                self.status_text.set(str(exc))
+            return
+        if not silent:
+            self.status_text.set("Yaw source settings sent to robot.")
+
+    def imu_payload(self) -> dict:
+        pixhawk_weight = min(1.0, max(0.0, float(self.vars["imu_pixhawk_weight"].get())))
+        encoder_weight = min(1.0, max(0.0, float(self.vars["imu_encoder_weight"].get())))
+        if pixhawk_weight + encoder_weight <= 0.001:
+            pixhawk_weight = 0.8
+            encoder_weight = 0.2
+        return {
+            "use_pixhawk_yaw": bool(self.use_pixhawk_yaw_var.get()),
+            "pixhawk_weight": pixhawk_weight,
+            "encoder_weight": encoder_weight,
+            "pixhawk_port": self.vars["imu_port"].get().strip() or "/dev/serial0",
+            "pixhawk_baud": max(1200, int(float(self.vars["imu_baud"].get()))),
+            "pixhawk_timeout_s": min(5.0, max(0.10, float(self.vars["imu_timeout"].get()))),
+        }
+
+    def set_imu_vars(self, imu: dict[str, Any]) -> None:
+        merged = dict(DEFAULT_IMU_SETTINGS)
+        merged.update(imu)
+        self.use_pixhawk_yaw_var.set(bool(merged["use_pixhawk_yaw"]))
+        self.vars["imu_pixhawk_weight"].set(f"{float(merged['pixhawk_weight']):.2f}")
+        self.vars["imu_encoder_weight"].set(f"{float(merged['encoder_weight']):.2f}")
+        self.vars["imu_port"].set(str(merged["pixhawk_port"]))
+        self.vars["imu_baud"].set(str(int(float(merged["pixhawk_baud"]))))
+        self.vars["imu_timeout"].set(f"{float(merged['pixhawk_timeout_s']):.2f}")
+        self.imu_settings = self.imu_payload()
+        self.save_settings()
+
+    def load_default_imu_settings(self) -> None:
+        self.set_imu_vars(DEFAULT_IMU_SETTINGS)
+        self.status_text.set("Loaded Pixhawk 80/20 yaw defaults.")
+
     def nav2_payload(self) -> dict:
         return {
             "desired_linear_vel": float(self.vars["nav2_desired_linear_vel"].get()),
@@ -654,6 +762,7 @@ class EurobootDashboard:
                 "bridge_port": self.vars["bridge_port"].get().strip(),
                 "save_debug": bool(self.save_debug_var.get()),
                 "geometry": self.geometry_payload(),
+                "imu": self.imu_settings,
                 "nav2_params": self.nav2_params,
                 "next_debug_id": int(self.settings.get("next_debug_id", 1)),
             }
@@ -678,6 +787,7 @@ class EurobootDashboard:
             "id": debug_id,
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "geometry": self.geometry_payload(),
+            "imu": self.imu_settings,
             "nav2_params": self.nav2_params,
             "waypoints": waypoints,
             "bridge_host": self.vars["bridge_host"].get().strip(),
@@ -697,6 +807,12 @@ class EurobootDashboard:
                 "raw_x_m",
                 "raw_y_m",
                 "raw_yaw_rad",
+                "encoder_yaw_rad",
+                "pixhawk_yaw_rad",
+                "pixhawk_age_s",
+                "yaw_source",
+                "pixhawk_weight",
+                "encoder_weight",
                 "linear_x_mps",
                 "angular_z_radps",
                 "event_type",
@@ -719,6 +835,12 @@ class EurobootDashboard:
                 "raw_x_m": message.get("raw_x", ""),
                 "raw_y_m": message.get("raw_y", ""),
                 "raw_yaw_rad": message.get("raw_yaw", ""),
+                "encoder_yaw_rad": message.get("encoder_yaw", ""),
+                "pixhawk_yaw_rad": message.get("pixhawk_yaw", ""),
+                "pixhawk_age_s": message.get("pixhawk_age_s", ""),
+                "yaw_source": message.get("yaw_source", ""),
+                "pixhawk_weight": message.get("pixhawk_weight", ""),
+                "encoder_weight": message.get("encoder_weight", ""),
                 "linear_x_mps": message.get("linear_x", ""),
                 "angular_z_radps": message.get("angular_z", ""),
                 "event_type": "odom",
@@ -739,6 +861,12 @@ class EurobootDashboard:
                 "raw_x_m": "",
                 "raw_y_m": "",
                 "raw_yaw_rad": "",
+                "encoder_yaw_rad": "",
+                "pixhawk_yaw_rad": "",
+                "pixhawk_age_s": "",
+                "yaw_source": self.imu_settings.get("use_pixhawk_yaw", ""),
+                "pixhawk_weight": self.imu_settings.get("pixhawk_weight", ""),
+                "encoder_weight": self.imu_settings.get("encoder_weight", ""),
                 "linear_x_mps": "",
                 "angular_z_radps": "",
                 "event_type": "mission_status",

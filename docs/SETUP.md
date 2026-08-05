@@ -296,9 +296,14 @@ This is integrable into odometry, but the yaw must be treated carefully:
   cleared.
 - The bridge should store a yaw offset when odometry is cleared:
   `local_yaw = normalize(pixhawk_yaw - pixhawk_yaw_at_origin)`.
-- For the first integration, use Pixhawk yaw only to correct heading in the
-  Pi-side odometry/TF, while keeping ESP32 wheel odometry for `x`, `y`, and
-  linear speed.
+- Current integration uses Pixhawk yaw only to correct heading in Pi-side
+  `/odom` and TF, while keeping ESP32 wheel odometry for `x`, `y`, and linear
+  speed.
+- The dashboard defaults to `0.8` Pixhawk yaw weight and `0.2` encoder yaw
+  weight. Uncheck `Use Pixhawk yaw` to return to encoder-only heading.
+- Geometry changes from the dashboard now affect the bridge-published `/odom`
+  scaling and TF immediately. ESP32 control constants still require firmware
+  rebuild/upload until a runtime firmware config service is added.
 - The more standard ROS 2 solution is to publish Pixhawk IMU/yaw and fuse it
   with wheel odometry using `robot_localization` EKF, producing the final
   `/odom` used by Nav2.

@@ -9,9 +9,11 @@ newline-delimited JSON, so the dashboard does not need ROS installed locally.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import socket
+import struct
 import threading
 import time
 from dataclasses import dataclass
@@ -25,14 +27,30 @@ from nav2_msgs.action import FollowPath
 from nav_msgs.msg import Odometry, Path as NavPath
 from rclpy.action import ActionClient
 from rclpy.executors import SingleThreadedExecutor
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.parameter_client import AsyncParameterClient
 from tf2_ros import TransformBroadcaster
 
+try:
+    import serial
+except ImportError:  # pragma: no cover - bridge runs on Pi where pyserial is installed
+    serial = None
+
+try:
+    from pixhawk_mavlink_yaw_probe import parse_frames
+except ImportError:  # pragma: no cover - keeps old deployments importable
+    parse_frames = None
+
 
 RUNTIME_GEOMETRY_PATH = Path("/home/maker/euroboot/config/euroboot_runtime_geometry.json")
 RUNTIME_NAV2_PATH = Path("/home/maker/euroboot/config/euroboot_runtime_nav2.json")
+RUNTIME_IMU_PATH = Path("/home/maker/euroboot/config/euroboot_runtime_imu.json")
+
+FIRMWARE_WHEEL_DIAMETER_M = 0.04586
+FIRMWARE_WHEEL_BASE_M = 0.15216
+FIRMWARE_COUNTS_PER_REV = 1400
 
 NAV2_PARAM_DEFAULTS = {
     "desired_linear_vel": 0.22,
@@ -47,6 +65,15 @@ NAV2_PARAM_DEFAULTS = {
     "max_angular_accel": 3.40,
     "xy_goal_tolerance": 0.06,
     "yaw_goal_tolerance": 6.28,
+}
+
+IMU_DEFAULTS = {
+    "use_pixhawk_yaw": True,
+    "pixhawk_weight": 0.80,
+    "encoder_weight": 0.20,
+    "pixhawk_port": "/dev/serial0",
+    "pixhawk_baud": 115200,
+    "pixhawk_timeout_s": 0.75,
 }
 
 NAV2_PARAM_TARGETS = {
@@ -106,12 +133,74 @@ class MissionWaypoint:
     final_yaw: float | None = None
 
 
+class PixhawkYawReader:
+    def __init__(self, node: Node, port: str, baud: int) -> None:
+        self.node = node
+        self.port = port
+        self.baud = baud
+        self.lock = threading.Lock()
+        self.latest_yaw: float | None = None
+        self.latest_t: float = 0.0
+        self.running = False
+        self.thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self.thread and self.thread.is_alive():
+            return
+        self.running = True
+        self.thread = threading.Thread(target=self.loop, daemon=True)
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.running = False
+
+    def update_port(self, port: str, baud: int) -> None:
+        if port == self.port and baud == self.baud:
+            return
+        self.stop()
+        self.port = port
+        self.baud = baud
+        self.thread = None
+        self.start()
+
+    def get(self) -> tuple[float | None, float]:
+        with self.lock:
+            yaw = self.latest_yaw
+            t = self.latest_t
+        age = float("inf") if t <= 0.0 else time.monotonic() - t
+        return yaw, age
+
+    def loop(self) -> None:
+        if serial is None or parse_frames is None:
+            self.node.get_logger().warn("Pixhawk yaw reader unavailable: pyserial or MAVLink parser missing")
+            return
+
+        buffer = bytearray()
+        while self.running:
+            try:
+                with serial.Serial(self.port, self.baud, timeout=0.2) as ser:
+                    self.node.get_logger().info(f"Pixhawk yaw reader opened {self.port} @ {self.baud}")
+                    while self.running:
+                        buffer.extend(ser.read(512))
+                        for frame in parse_frames(buffer):
+                            if frame.msgid != 30 or len(frame.payload) < 28:
+                                continue
+                            yaw = struct.unpack_from("<f", frame.payload, 12)[0]
+                            with self.lock:
+                                self.latest_yaw = yaw
+                                self.latest_t = time.monotonic()
+            except Exception as exc:
+                self.node.get_logger().warn(f"Pixhawk yaw reader error: {exc}")
+                time.sleep(1.0)
+
+
 class DashboardBridge(Node):
     def __init__(self, host: str, port: int) -> None:
         super().__init__("euroboot_dashboard_bridge")
         self.host = host
         self.port = port
         self.odom_sub = self.create_subscription(Odometry, "/odom/unfiltered", self.odom_cb, 30)
+        self.odom_pub = self.create_publisher(Odometry, "/odom", 30)
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self.nav_client = ActionClient(self, FollowPath, "follow_path")
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -119,9 +208,20 @@ class DashboardBridge(Node):
         self.lock = threading.RLock()
         self.dashboard_clients: set[socket.socket] = set()
         self.raw_pose: Pose2D | None = None
+        self.encoder_pose: Pose2D | None = None
         self.origin: Pose2D | None = None
+        self.encoder_origin_yaw: float | None = None
+        self.pixhawk_origin_yaw: float | None = None
+        self.fused_origin_yaw: float | None = None
         self.geometry = self.load_geometry()
         self.nav2_params = self.load_nav2_params()
+        self.imu_settings = self.load_imu_settings()
+        self.pixhawk_reader = PixhawkYawReader(
+            self,
+            str(self.imu_settings["pixhawk_port"]),
+            int(self.imu_settings["pixhawk_baud"]),
+        )
+        self.pixhawk_reader.start()
         self.mission_thread: threading.Thread | None = None
         self.cancel_requested = False
         self.shutdown_requested = False
@@ -134,18 +234,27 @@ class DashboardBridge(Node):
 
     def odom_cb(self, msg: Odometry) -> None:
         p = msg.pose.pose.position
-        pose = Pose2D(p.x, p.y, yaw_from_quat(msg.pose.pose.orientation))
+        encoder_yaw = yaw_from_quat(msg.pose.pose.orientation)
+        corrected_x, corrected_y = self.correct_xy(p.x, p.y)
 
         with self.lock:
+            self.encoder_pose = Pose2D(corrected_x, corrected_y, encoder_yaw)
+            fused_yaw, yaw_info = self.fused_yaw_locked(encoder_yaw)
+            pose = Pose2D(corrected_x, corrected_y, fused_yaw)
             self.raw_pose = pose
             if self.origin is None:
                 self.origin = Pose2D(pose.x, pose.y, pose.yaw)
+                self.encoder_origin_yaw = encoder_yaw
+                pixhawk_yaw, _age = self.pixhawk_reader.get()
+                self.pixhawk_origin_yaw = pixhawk_yaw
             local = self.raw_to_local_locked(pose)
+
+        self.publish_fused_odom(msg, pose)
 
         now = time.monotonic()
         if now - self.last_tf_t >= 0.05:
             self.last_tf_t = now
-            self.broadcast_tf(msg)
+            self.broadcast_tf(msg, pose)
 
         if now - self.last_broadcast_t < 0.10:
             return
@@ -160,20 +269,97 @@ class DashboardBridge(Node):
                 "raw_x": pose.x,
                 "raw_y": pose.y,
                 "raw_yaw": pose.yaw,
+                "encoder_yaw": encoder_yaw,
+                "pixhawk_yaw": yaw_info["pixhawk_yaw"],
+                "pixhawk_age_s": yaw_info["pixhawk_age_s"],
+                "yaw_source": yaw_info["yaw_source"],
+                "use_pixhawk_yaw": bool(self.imu_settings["use_pixhawk_yaw"]),
+                "pixhawk_weight": float(self.imu_settings["pixhawk_weight"]),
+                "encoder_weight": float(self.imu_settings["encoder_weight"]),
                 "linear_x": msg.twist.twist.linear.x,
                 "angular_z": msg.twist.twist.angular.z,
             }
         )
 
-    def broadcast_tf(self, msg: Odometry) -> None:
+    def geometry_distance_scale(self) -> float:
+        wheel_diameter = float(self.geometry.get("wheel_diameter_m", FIRMWARE_WHEEL_DIAMETER_M))
+        counts_per_rev = float(self.geometry.get("counts_per_rev", FIRMWARE_COUNTS_PER_REV))
+        return (wheel_diameter / FIRMWARE_WHEEL_DIAMETER_M) * (FIRMWARE_COUNTS_PER_REV / counts_per_rev)
+
+    def geometry_yaw_scale(self) -> float:
+        wheel_base = float(self.geometry.get("wheel_base_m", FIRMWARE_WHEEL_BASE_M))
+        return FIRMWARE_WHEEL_BASE_M / wheel_base
+
+    def correct_xy(self, x: float, y: float) -> tuple[float, float]:
+        scale = self.geometry_distance_scale()
+        return x * scale, y * scale
+
+    def fused_yaw_locked(self, encoder_yaw: float) -> tuple[float, dict[str, Any]]:
+        encoder_origin = self.encoder_origin_yaw
+        if encoder_origin is None:
+            encoder_origin = encoder_yaw
+            self.encoder_origin_yaw = encoder_origin
+        fused_origin = self.fused_origin_yaw
+        if fused_origin is None:
+            fused_origin = encoder_origin
+            self.fused_origin_yaw = fused_origin
+
+        encoder_delta = normalize_angle(encoder_yaw - encoder_origin) * self.geometry_yaw_scale()
+        encoder_delta = normalize_angle(encoder_delta)
+        pixhawk_yaw, pixhawk_age = self.pixhawk_reader.get()
+        pixhawk_timeout = float(self.imu_settings["pixhawk_timeout_s"])
+
+        if not bool(self.imu_settings["use_pixhawk_yaw"]):
+            return normalize_angle(fused_origin + encoder_delta), {
+                "yaw_source": "encoder",
+                "pixhawk_yaw": pixhawk_yaw,
+                "pixhawk_age_s": pixhawk_age,
+            }
+
+        if pixhawk_yaw is None or pixhawk_age > pixhawk_timeout:
+            return normalize_angle(fused_origin + encoder_delta), {
+                "yaw_source": "encoder_pixhawk_stale",
+                "pixhawk_yaw": pixhawk_yaw,
+                "pixhawk_age_s": pixhawk_age,
+            }
+
+        if self.pixhawk_origin_yaw is None:
+            self.pixhawk_origin_yaw = pixhawk_yaw
+
+        pixhawk_delta = normalize_angle(pixhawk_yaw - self.pixhawk_origin_yaw)
+        pixhawk_weight = float(self.imu_settings["pixhawk_weight"])
+        encoder_weight = float(self.imu_settings["encoder_weight"])
+        total = max(0.001, pixhawk_weight + encoder_weight)
+        pixhawk_weight /= total
+        encoder_weight /= total
+
+        sin_sum = pixhawk_weight * math.sin(pixhawk_delta) + encoder_weight * math.sin(encoder_delta)
+        cos_sum = pixhawk_weight * math.cos(pixhawk_delta) + encoder_weight * math.cos(encoder_delta)
+        fused_delta = math.atan2(sin_sum, cos_sum)
+        return normalize_angle(fused_origin + fused_delta), {
+            "yaw_source": "pixhawk_fused",
+            "pixhawk_yaw": pixhawk_yaw,
+            "pixhawk_age_s": pixhawk_age,
+        }
+
+    def publish_fused_odom(self, msg: Odometry, pose: Pose2D) -> None:
+        fused = copy.deepcopy(msg)
+        fused.header.frame_id = msg.header.frame_id or "odom"
+        fused.child_frame_id = msg.child_frame_id or "base_footprint"
+        fused.pose.pose.position.x = pose.x
+        fused.pose.pose.position.y = pose.y
+        fused.pose.pose.orientation = quat_from_yaw(pose.yaw)
+        self.odom_pub.publish(fused)
+
+    def broadcast_tf(self, msg: Odometry, pose: Pose2D) -> None:
         tf = TransformStamped()
         tf.header = msg.header
         tf.header.frame_id = msg.header.frame_id or "odom"
         tf.child_frame_id = msg.child_frame_id or "base_footprint"
-        tf.transform.translation.x = msg.pose.pose.position.x
-        tf.transform.translation.y = msg.pose.pose.position.y
+        tf.transform.translation.x = pose.x
+        tf.transform.translation.y = pose.y
         tf.transform.translation.z = msg.pose.pose.position.z
-        tf.transform.rotation = msg.pose.pose.orientation
+        tf.transform.rotation = quat_from_yaw(pose.yaw)
         self.tf_broadcaster.sendTransform(tf)
 
     def raw_to_local_locked(self, pose: Pose2D) -> Pose2D:
@@ -258,6 +444,9 @@ class DashboardBridge(Node):
         kind = command.get("type")
         if kind == "hello":
             self.send(client, {"type": "status", "level": "info", "message": "bridge ready"})
+            self.send(client, {"type": "geometry", "geometry": self.geometry})
+            self.send(client, {"type": "nav2_params", "params": self.nav2_params})
+            self.send(client, {"type": "imu", "imu": self.imu_settings})
             return
         if kind == "reset_odom":
             self.reset_local_origin()
@@ -267,6 +456,9 @@ class DashboardBridge(Node):
             return
         if kind == "set_nav2_params":
             self.set_nav2_params(command.get("params", {}))
+            return
+        if kind == "set_imu":
+            self.set_imu_settings(command.get("imu", {}))
             return
         if kind == "stop":
             self.cancel_requested = True
@@ -306,7 +498,7 @@ class DashboardBridge(Node):
                 "counts_per_rev": max(1, int(float(geometry["counts_per_rev"]))),
                 "max_rpm": max(1, int(float(geometry["max_rpm"]))),
                 "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "note": "Runtime dashboard/bridge geometry. ESP32 firmware constants still require rebuild/upload.",
+                "note": "Runtime bridge geometry. Bridge scales /odom and TF for Nav2; ESP32 control constants still require rebuild/upload.",
             }
         except (KeyError, TypeError, ValueError):
             self.broadcast({"type": "status", "level": "error", "message": "invalid geometry values"})
@@ -316,7 +508,91 @@ class DashboardBridge(Node):
         RUNTIME_GEOMETRY_PATH.parent.mkdir(parents=True, exist_ok=True)
         RUNTIME_GEOMETRY_PATH.write_text(json.dumps(updated, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         self.broadcast({"type": "geometry", "geometry": updated})
-        self.broadcast({"type": "status", "level": "info", "message": "runtime geometry saved on robot"})
+        self.broadcast({"type": "status", "level": "info", "message": "runtime geometry saved; bridge /odom scaling updated"})
+
+    def load_imu_settings(self) -> dict[str, Any]:
+        settings = dict(IMU_DEFAULTS)
+        try:
+            data = json.loads(RUNTIME_IMU_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return settings
+
+        for key, value in IMU_DEFAULTS.items():
+            if key not in data:
+                continue
+            try:
+                if isinstance(value, bool):
+                    settings[key] = bool(data[key])
+                elif isinstance(value, int):
+                    settings[key] = int(data[key])
+                elif isinstance(value, float):
+                    settings[key] = float(data[key])
+                else:
+                    settings[key] = str(data[key])
+            except (TypeError, ValueError):
+                pass
+        return self.validate_imu_settings(settings)
+
+    def set_imu_settings(self, imu: dict[str, Any]) -> None:
+        try:
+            updated = dict(self.imu_settings)
+            for key in IMU_DEFAULTS:
+                if key not in imu:
+                    continue
+                default = IMU_DEFAULTS[key]
+                if isinstance(default, bool):
+                    updated[key] = bool(imu[key])
+                elif isinstance(default, int):
+                    updated[key] = int(float(imu[key]))
+                elif isinstance(default, float):
+                    updated[key] = float(imu[key])
+                else:
+                    updated[key] = str(imu[key]).strip() or str(default)
+            updated = self.validate_imu_settings(updated)
+            updated["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            updated["note"] = "Runtime yaw fusion settings from Euroboot dashboard."
+        except (TypeError, ValueError):
+            self.broadcast({"type": "status", "level": "error", "message": "invalid Pixhawk yaw settings"})
+            return
+
+        old_port = str(self.imu_settings.get("pixhawk_port", IMU_DEFAULTS["pixhawk_port"]))
+        old_baud = int(self.imu_settings.get("pixhawk_baud", IMU_DEFAULTS["pixhawk_baud"]))
+        self.imu_settings = {key: updated[key] for key in IMU_DEFAULTS}
+        RUNTIME_IMU_PATH.parent.mkdir(parents=True, exist_ok=True)
+        RUNTIME_IMU_PATH.write_text(json.dumps(updated, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        new_port = str(self.imu_settings["pixhawk_port"])
+        new_baud = int(self.imu_settings["pixhawk_baud"])
+        if new_port != old_port or new_baud != old_baud:
+            self.pixhawk_reader.update_port(new_port, new_baud)
+
+        with self.lock:
+            if self.encoder_pose is not None:
+                self.encoder_origin_yaw = self.encoder_pose.yaw
+            pixhawk_yaw, _age = self.pixhawk_reader.get()
+            self.pixhawk_origin_yaw = pixhawk_yaw
+            if self.raw_pose is not None:
+                self.origin = Pose2D(self.raw_pose.x, self.raw_pose.y, self.raw_pose.yaw)
+                self.fused_origin_yaw = self.raw_pose.yaw
+
+        self.broadcast({"type": "imu", "imu": self.imu_settings})
+        mode = "Pixhawk yaw fusion enabled" if self.imu_settings["use_pixhawk_yaw"] else "encoder yaw only"
+        self.broadcast({"type": "status", "level": "info", "message": mode})
+
+    def validate_imu_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
+        pixhawk_weight = min(1.0, max(0.0, float(settings["pixhawk_weight"])))
+        encoder_weight = min(1.0, max(0.0, float(settings["encoder_weight"])))
+        if pixhawk_weight + encoder_weight <= 0.001:
+            pixhawk_weight = 0.80
+            encoder_weight = 0.20
+        return {
+            "use_pixhawk_yaw": bool(settings["use_pixhawk_yaw"]),
+            "pixhawk_weight": pixhawk_weight,
+            "encoder_weight": encoder_weight,
+            "pixhawk_port": str(settings["pixhawk_port"]).strip() or str(IMU_DEFAULTS["pixhawk_port"]),
+            "pixhawk_baud": max(1200, int(settings["pixhawk_baud"])),
+            "pixhawk_timeout_s": min(5.0, max(0.10, float(settings["pixhawk_timeout_s"]))),
+        }
 
     def load_nav2_params(self) -> dict[str, float]:
         params = dict(NAV2_PARAM_DEFAULTS)
@@ -407,6 +683,11 @@ class DashboardBridge(Node):
         with self.lock:
             if self.raw_pose is not None:
                 self.origin = Pose2D(self.raw_pose.x, self.raw_pose.y, self.raw_pose.yaw)
+                self.fused_origin_yaw = self.raw_pose.yaw
+            if self.encoder_pose is not None:
+                self.encoder_origin_yaw = self.encoder_pose.yaw
+            pixhawk_yaw, _age = self.pixhawk_reader.get()
+            self.pixhawk_origin_yaw = pixhawk_yaw
         self.get_logger().info("dashboard odom origin reset")
         self.broadcast({"type": "status", "level": "info", "message": "dashboard odom origin reset"})
 
@@ -703,13 +984,14 @@ def main() -> None:
     node = DashboardBridge(args.host, args.port)
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.shutdown_requested = True
         node.publish_stop()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

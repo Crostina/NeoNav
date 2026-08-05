@@ -7,6 +7,14 @@
     "wheel_base_m": 0.15216,
     "wheel_diameter_m": 0.04
   },
+  "imu": {
+    "encoder_weight": 0.2,
+    "pixhawk_baud": 115200,
+    "pixhawk_port": "/dev/serial0",
+    "pixhawk_timeout_s": 0.75,
+    "pixhawk_weight": 0.8,
+    "use_pixhawk_yaw": true
+  },
   "nav2_params": {
     "approach_velocity_scaling_dist": 0.2,
     "desired_linear_vel": 0.22,

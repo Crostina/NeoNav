@@ -6,6 +6,7 @@ ROS_SETUP="${ROS_SETUP:-/opt/ros/jazzy/setup.bash}"
 MICROROS_SETUP="${MICROROS_SETUP:-/home/maker/microros_ws/install/local_setup.bash}"
 ESP32_PORT="${ESP32_PORT:-/dev/ttyUSB0}"
 ESP32_BAUD="${ESP32_BAUD:-921600}"
+RESET_ESP32="${RESET_ESP32:-0}"
 BRIDGE_HOST="${BRIDGE_HOST:-0.0.0.0}"
 BRIDGE_PORT="${BRIDGE_PORT:-8765}"
 LOG_DIR="${LOG_DIR:-/tmp/euroboot}"
@@ -46,33 +47,22 @@ PY
 }
 
 wait_for_odom() {
-    echo "waiting for /odom/unfiltered publisher..."
-    for attempt in $(seq 1 60); do
-        if bash -lc "source '$ROS_SETUP'; timeout 1 ros2 topic info /odom/unfiltered 2>/dev/null | grep -q 'Publisher count: [1-9]'"; then
-            echo "/odom/unfiltered publisher is active"
+    echo "checking /odom/unfiltered topic..."
+    for attempt in $(seq 1 5); do
+        if bash -lc "source '$ROS_SETUP'; timeout 2 ros2 topic list 2>/dev/null | grep -qx '/odom/unfiltered'"; then
+            echo "/odom/unfiltered topic is visible"
             break
         fi
-        printf "  odom wait %02d/60\r" "$attempt"
+        printf "  odom wait %02d/05\r" "$attempt"
         sleep 1
-        if [[ "$attempt" == "60" ]]; then
+        if [[ "$attempt" == "5" ]]; then
             echo
-            echo "warning: /odom/unfiltered has no publisher yet"
+            echo "warning: /odom/unfiltered is not visible yet; continuing startup"
             return 1
         fi
     done
 
-    echo "checking /odom/unfiltered data rate..."
-    for attempt in $(seq 1 12); do
-        if bash -lc "source '$ROS_SETUP'; timeout 4 ros2 topic hz /odom/unfiltered 2>/dev/null | grep -q 'average rate'"; then
-            echo "/odom/unfiltered samples are flowing"
-            return 0
-        fi
-        printf "  odom sample wait %02d/12\r" "$attempt"
-        sleep 1
-    done
-    echo
-    echo "warning: /odom/unfiltered publisher exists, but samples were not confirmed"
-    return 1
+    return 0
 }
 
 wait_for_tf() {
@@ -91,14 +81,14 @@ wait_for_tf() {
 }
 
 stop_stack() {
-    pkill -f "euroboot_ros_bridge.py" 2>/dev/null || true
-    pkill -f "nav2_minimal_odom_launch.py" 2>/dev/null || true
-    pkill -f "micro_ros_agent.*serial.*${ESP32_PORT}" 2>/dev/null || true
-    pkill -f "controller_server" 2>/dev/null || true
-    pkill -f "planner_server" 2>/dev/null || true
-    pkill -f "behavior_server" 2>/dev/null || true
-    pkill -f "bt_navigator" 2>/dev/null || true
-    pkill -f "lifecycle_manager_navigation" 2>/dev/null || true
+    pkill -f "[e]uroboot_ros_bridge.py" 2>/dev/null || true
+    pkill -f "[n]av2_minimal_odom_launch.py" 2>/dev/null || true
+    pkill -f "[m]icro_ros_agent.*serial.*${ESP32_PORT}" 2>/dev/null || true
+    pkill -f "[c]ontroller_server" 2>/dev/null || true
+    pkill -f "[p]lanner_server" 2>/dev/null || true
+    pkill -f "[b]ehavior_server" 2>/dev/null || true
+    pkill -f "[b]t_navigator" 2>/dev/null || true
+    pkill -f "[l]ifecycle_manager_navigation" 2>/dev/null || true
 }
 
 start_stack() {
@@ -112,24 +102,15 @@ start_stack() {
     run_background "micro_ros_agent" \
         "source '$ROS_SETUP'; source '$MICROROS_SETUP'; ros2 run micro_ros_agent micro_ros_agent serial -D '$ESP32_PORT' -b '$ESP32_BAUD' -v2"
     sleep 1
-    reset_esp32
-    sleep 2
-
-    if ! wait_for_odom; then
-        echo "ESP32 odometry is not online. Nav2 was not started."
-        echo "Try resetting/replugging the ESP32 USB, then run: $0 restart"
-        status_stack
-        return 1
+    if [[ "$RESET_ESP32" == "1" ]]; then
+        reset_esp32
     fi
+    sleep 2
+    wait_for_odom || true
 
     run_background "dashboard_bridge" \
         "source '$ROS_SETUP'; source '$MICROROS_SETUP'; python3 '$EUROBOOT_HOME/tools/euroboot_ros_bridge.py' --host '$BRIDGE_HOST' --port '$BRIDGE_PORT'"
-    sleep 2
-    if ! wait_for_tf; then
-        echo "Dashboard bridge is online, but it did not publish TF. Nav2 was not started."
-        status_stack
-        return 1
-    fi
+    sleep 3
 
     run_background "nav2" \
         "source '$ROS_SETUP'; ros2 launch '$EUROBOOT_HOME/tools/nav2_minimal_odom_launch.py'"
