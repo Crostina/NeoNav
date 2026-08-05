@@ -37,8 +37,8 @@ class Encoder
 private:
 	int counts_per_rev_ = -1;
         ESP32Encoder encoder_;
-	unsigned long prev_update_time_;
-        int64_t prev_encoder_ticks_;
+	unsigned long prev_update_time_ = 0;
+        int64_t prev_encoder_ticks_ = 0;
 public:
 	Encoder(int pin1, int pin2, int counts_per_rev, bool invert = false) {
 		int temp_pin = pin1;
@@ -49,7 +49,9 @@ public:
 			pin2 = temp_pin;
 		}
 		counts_per_rev_ = counts_per_rev;
-		encoder_.attachHalfQuad(pin1, pin2);
+		encoder_.attachFullQuad(pin1, pin2);
+		prev_update_time_ = micros();
+		prev_encoder_ticks_ = encoder_.getCount();
 	}
 	float getRPM() {
 	        if (counts_per_rev_ < 0) return 0.0;
@@ -57,6 +59,7 @@ public:
 		//this function calculates the motor's RPM based on encoder ticks and delta time
 		unsigned long current_time = micros();
 		unsigned long dt = current_time - prev_update_time_;
+		if (dt == 0) return 0.0;
 
 		//convert the time from milliseconds to minutes
 		double dtm = (double)dt / 60000000;

@@ -58,6 +58,9 @@
 // this barrier helps to reduce user merge conflict
 // add user configurations below this line
 
+#ifdef USE_EUROBOOT_ESP32_CONFIG
+    #include "custom/euroboot_esp32_config.h"
+#endif
 
 // add user configurations above this line
 

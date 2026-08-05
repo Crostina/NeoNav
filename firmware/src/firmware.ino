@@ -350,6 +350,25 @@ void fullStop()
     motor4_controller.brake();
 }
 
+#ifdef USE_EUROBOOT_MOTOR_FEEDFORWARD
+double applyMotorFeedforward(double pid_pwm, float target_rpm, float fwd_offset, float fwd_slope, float rev_offset, float rev_slope)
+{
+    if (fabs(target_rpm) < 0.5) {
+        return pid_pwm;
+    }
+
+    const float rpm = fabs(target_rpm);
+    double feedforward = 0.0;
+    if (target_rpm > 0.0) {
+        feedforward = fwd_offset + (fwd_slope * rpm);
+    } else {
+        feedforward = -(rev_offset + (rev_slope * rpm));
+    }
+
+    return constrain(pid_pwm + feedforward, PWM_MIN, PWM_MAX);
+}
+#endif
+
 void moveBase()
 {
     // brake if there's no command received, or when it's only the first command sent
@@ -376,10 +395,34 @@ void moveBase()
 
     // the required rpm is capped at -/+ MAX_RPM to prevent the PID from having too much error
     // the PWM value sent to the motor driver is the calculated PID based on required RPM vs measured RPM
-    motor1_controller.spin(motor1_pid.compute(req_rpm.motor1, current_rpm1));
-    motor2_controller.spin(motor2_pid.compute(req_rpm.motor2, current_rpm2));
-    motor3_controller.spin(motor3_pid.compute(req_rpm.motor3, current_rpm3));
-    motor4_controller.spin(motor4_pid.compute(req_rpm.motor4, current_rpm4));
+    double motor1_pwm = motor1_pid.compute(req_rpm.motor1, current_rpm1);
+    double motor2_pwm = motor2_pid.compute(req_rpm.motor2, current_rpm2);
+    double motor3_pwm = motor3_pid.compute(req_rpm.motor3, current_rpm3);
+    double motor4_pwm = motor4_pid.compute(req_rpm.motor4, current_rpm4);
+
+#ifdef USE_EUROBOOT_MOTOR_FEEDFORWARD
+    motor1_pwm = applyMotorFeedforward(
+        motor1_pwm,
+        req_rpm.motor1,
+        MOTOR1_FWD_FF_OFFSET,
+        MOTOR1_FWD_FF_SLOPE,
+        MOTOR1_REV_FF_OFFSET,
+        MOTOR1_REV_FF_SLOPE
+    );
+    motor2_pwm = applyMotorFeedforward(
+        motor2_pwm,
+        req_rpm.motor2,
+        MOTOR2_FWD_FF_OFFSET,
+        MOTOR2_FWD_FF_SLOPE,
+        MOTOR2_REV_FF_OFFSET,
+        MOTOR2_REV_FF_SLOPE
+    );
+#endif
+
+    motor1_controller.spin(motor1_pwm);
+    motor2_controller.spin(motor2_pwm);
+    motor3_controller.spin(motor3_pwm);
+    motor4_controller.spin(motor4_pwm);
 
     Kinematics::velocities current_vel = kinematics.getVelocities(
         current_rpm1, 

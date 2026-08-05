@@ -93,6 +93,9 @@ class Generic2: public MotorInterface
 #ifdef USE_SHORT_BRAKE
             digitalWrite(in_a_pin_, HIGH); // short brake
             digitalWrite(in_b_pin_, HIGH);
+#elif defined(USE_COAST_BRAKE_LOW)
+            digitalWrite(in_a_pin_, LOW);
+            digitalWrite(in_b_pin_, LOW);
 #endif
         }
 };

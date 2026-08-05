@@ -20,7 +20,10 @@ PID::PID(float min_val, float max_val, float kp, float ki, float kd):
     max_val_(max_val),
     kp_(kp),
     ki_(ki),
-    kd_(kd)
+    kd_(kd),
+    integral_(0.0),
+    derivative_(0.0),
+    prev_error_(0.0)
 {
 }
 

@@ -1,0 +1,32 @@
+{
+  "bridge_host": "192.168.137.97",
+  "bridge_port": "8765",
+  "created_at": "2026-08-04T17:02:30",
+  "finished_at": "2026-08-04T17:02:53",
+  "geometry": {
+    "counts_per_rev": 1400,
+    "max_rpm": 315,
+    "wheel_base_m": 0.15216,
+    "wheel_diameter_m": 0.04586
+  },
+  "id": 2,
+  "note": "Dashboard debug record. Runtime geometry does not imply ESP32 firmware constants were flashed.",
+  "status": "done",
+  "waypoints": [
+    {
+      "x": 1.0076923076923077,
+      "y": -0.0057692307692307696,
+      "yaw": -0.0057251282878520325
+    },
+    {
+      "x": 0.0,
+      "y": 0.5057692307692307,
+      "yaw": 2.671856839751503
+    },
+    {
+      "x": 0.0,
+      "y": 0.009615384615384616,
+      "yaw": -1.5707963267948966
+    }
+  ]
+}

@@ -1,0 +1,109 @@
+{
+  "bridge_host": "192.168.137.155",
+  "bridge_port": "8765",
+  "created_at": "2026-08-05T18:38:11",
+  "finished_at": "2026-08-05T18:39:25",
+  "geometry": {
+    "counts_per_rev": 1400,
+    "max_rpm": 315,
+    "wheel_base_m": 0.15216,
+    "wheel_diameter_m": 0.04
+  },
+  "id": 39,
+  "nav2_params": {
+    "approach_velocity_scaling_dist": 0.2,
+    "desired_linear_vel": 0.22,
+    "lookahead_dist": 0.1,
+    "lookahead_time": 0.3,
+    "max_angular_accel": 3.4,
+    "max_lookahead_dist": 0.28,
+    "min_approach_linear_velocity": 0.05,
+    "min_lookahead_dist": 0.07,
+    "regulated_linear_scaling_min_radius": 0.32,
+    "regulated_linear_scaling_min_speed": 0.05,
+    "xy_goal_tolerance": 0.03,
+    "yaw_goal_tolerance": 6.28
+  },
+  "note": "Dashboard debug record. Runtime geometry does not imply ESP32 firmware constants were flashed.",
+  "status": "done",
+  "waypoints": [
+    {
+      "final_yaw": null,
+      "x": 0.26153846153846155,
+      "y": -0.23076923076923078,
+      "yaw": -0.722979353401491
+    },
+    {
+      "final_yaw": null,
+      "x": 0.5038461538461538,
+      "y": -0.31153846153846154,
+      "yaw": -0.3217505543966422
+    },
+    {
+      "final_yaw": null,
+      "x": 0.7538461538461538,
+      "y": -0.16153846153846155,
+      "yaw": 0.5404195002705842
+    },
+    {
+      "final_yaw": null,
+      "x": 0.7461538461538462,
+      "y": 0.2230769230769231,
+      "yaw": 1.590793660768047
+    },
+    {
+      "final_yaw": null,
+      "x": 1.0038461538461538,
+      "y": 0.38846153846153847,
+      "yaw": 0.5705827629957897
+    },
+    {
+      "final_yaw": null,
+      "x": 1.2384615384615385,
+      "y": 0.26346153846153847,
+      "yaw": -0.4895317943645193
+    },
+    {
+      "final_yaw": null,
+      "x": 1.2461538461538462,
+      "y": -0.2519230769230769,
+      "yaw": -1.5558720618048116
+    },
+    {
+      "final_yaw": null,
+      "x": 1.5038461538461538,
+      "y": -0.33653846153846156,
+      "yaw": -0.31726627952182634
+    },
+    {
+      "final_yaw": null,
+      "x": 1.7461538461538462,
+      "y": -0.1326923076923077,
+      "yaw": 0.6994038722032075
+    },
+    {
+      "final_yaw": null,
+      "x": 1.75,
+      "y": 0.2519230769230769,
+      "yaw": 1.5607966601082315
+    },
+    {
+      "final_yaw": null,
+      "x": 1.9807692307692308,
+      "y": 0.47884615384615387,
+      "yaw": 0.7769949998498012
+    },
+    {
+      "final_yaw": null,
+      "x": 2.27843137254902,
+      "y": 0.35939542483660136,
+      "yaw": -0.38162341456883364
+    },
+    {
+      "final_yaw": 0.0,
+      "x": 2.495,
+      "y": 0.007,
+      "yaw": -1.0197386560847705
+    }
+  ]
+}
