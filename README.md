@@ -69,8 +69,9 @@ wheel, drives the L293D, and publishes `/odom/unfiltered` at about 50 Hz.
 
 The Pi bridge publishes the Nav2-facing `/odom` and `odom -> base_footprint` TF.
 By default, `/odom` keeps encoder x/y distance but fuses yaw as `80%` Pixhawk
-MAVLink ATTITUDE yaw and `20%` encoder yaw. The dashboard can switch back to
-encoder-only yaw at runtime.
+gyro-integrated yaw and `20%` encoder yaw. MAVLink yaw is converted from the
+Pixhawk/NED convention to ROS yaw with sign `-1`. The dashboard can switch back
+to encoder-only yaw at runtime.
 
 The Raspberry Pi runs:
 
@@ -86,6 +87,7 @@ The Windows dashboard runs without ROS installed and talks only to the Pi bridge
 - `config/custom/euroboot_esp32_config.h` - Euroboot ESP32 motor, encoder, geometry, and PI constants
 - `tools/euroboot_dashboard.py` - Windows Tkinter dashboard
 - `tools/euroboot_ros_bridge.py` - Pi TCP-to-ROS bridge and mission runner
+- `tools/field_test_client.py` - scripted one-shot field test logger
 - `tools/start_euroboot_pi.sh` - one-command Pi bring-up helper
 - `tools/nav2_minimal_odom_*.py|yaml` - minimal Nav2 launch and tuning
 - `tools/esp32_*` - motor/encoder calibration and isolation tests

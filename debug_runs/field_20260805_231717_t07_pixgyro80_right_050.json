@@ -1,0 +1,55 @@
+{
+  "created_at": "2026-08-05T23:17:17",
+  "csv": "C:\\Users\\Golde\\Documents\\PlatformIO\\Projects\\EUROBOOT\\debug_runs\\field_20260805_231717_t07_pixgyro80_right_050.csv",
+  "finished_at": "2026-08-05T23:17:32",
+  "host": "192.168.137.217",
+  "imu": {
+    "encoder_weight": 0.2,
+    "pixhawk_weight": 0.8,
+    "pixhawk_yaw_mode": "gyro",
+    "pixhawk_yaw_sign": -1.0,
+    "use_pixhawk_yaw": true
+  },
+  "label": "t07_pixgyro80_right_050",
+  "last_odom": {
+    "angular_z": 0.0,
+    "encoder_weight": 0.2,
+    "encoder_yaw": -1.5670911371561496,
+    "linear_x": 0.0,
+    "pixhawk_age_s": 0.02709238399984315,
+    "pixhawk_gyro_yaw": 0.17620218479819605,
+    "pixhawk_weight": 0.8,
+    "pixhawk_yaw": -2.656499147415161,
+    "pixhawk_yaw_mode": "gyro",
+    "pixhawk_yaw_ros": -0.17620218479819605,
+    "pixhawk_yaw_sign": -1.0,
+    "raw_x": 1.6061503763444238,
+    "raw_y": -3.682846904476813,
+    "raw_yaw": -1.3741053301301707,
+    "t": 7028.573925288,
+    "type": "odom",
+    "use_pixhawk_yaw": true,
+    "x": -0.023903720793921293,
+    "y": -0.48826244144150416,
+    "yaw": -1.5878195365484997,
+    "yaw_source": "pixhawk_fused"
+  },
+  "nav2": {
+    "desired_linear_vel": 0.22,
+    "lookahead_dist": 0.14,
+    "lookahead_time": 0.45,
+    "max_lookahead_dist": 0.28,
+    "min_lookahead_dist": 0.07,
+    "xy_goal_tolerance": 0.05,
+    "yaw_goal_tolerance": 6.28
+  },
+  "port": 8765,
+  "rows": 130,
+  "status": "done",
+  "waypoint": {
+    "final_yaw": -1.5707963267948966,
+    "x": 0.0,
+    "y": -0.5,
+    "yaw": -1.5707963267948966
+  }
+}

@@ -53,17 +53,17 @@ FIRMWARE_WHEEL_BASE_M = 0.15216
 FIRMWARE_COUNTS_PER_REV = 1400
 
 NAV2_PARAM_DEFAULTS = {
-    "desired_linear_vel": 0.22,
-    "lookahead_dist": 0.14,
-    "min_lookahead_dist": 0.07,
-    "max_lookahead_dist": 0.28,
+    "desired_linear_vel": 0.24,
+    "lookahead_dist": 0.15,
+    "min_lookahead_dist": 0.08,
+    "max_lookahead_dist": 0.32,
     "lookahead_time": 0.45,
     "min_approach_linear_velocity": 0.05,
     "approach_velocity_scaling_dist": 0.20,
     "regulated_linear_scaling_min_radius": 0.32,
     "regulated_linear_scaling_min_speed": 0.05,
     "max_angular_accel": 3.40,
-    "xy_goal_tolerance": 0.06,
+    "xy_goal_tolerance": 0.05,
     "yaw_goal_tolerance": 6.28,
 }
 
@@ -71,6 +71,8 @@ IMU_DEFAULTS = {
     "use_pixhawk_yaw": True,
     "pixhawk_weight": 0.80,
     "encoder_weight": 0.20,
+    "pixhawk_yaw_mode": "gyro",
+    "pixhawk_yaw_sign": -1.0,
     "pixhawk_port": "/dev/serial0",
     "pixhawk_baud": 115200,
     "pixhawk_timeout_s": 0.75,
@@ -140,6 +142,8 @@ class PixhawkYawReader:
         self.baud = baud
         self.lock = threading.Lock()
         self.latest_yaw: float | None = None
+        self.integrated_yaw: float = 0.0
+        self.last_boot_ms: int | None = None
         self.latest_t: float = 0.0
         self.running = False
         self.thread: threading.Thread | None = None
@@ -163,12 +167,13 @@ class PixhawkYawReader:
         self.thread = None
         self.start()
 
-    def get(self) -> tuple[float | None, float]:
+    def get(self) -> tuple[float | None, float, float | None]:
         with self.lock:
             yaw = self.latest_yaw
+            integrated_yaw = self.integrated_yaw
             t = self.latest_t
         age = float("inf") if t <= 0.0 else time.monotonic() - t
-        return yaw, age
+        return yaw, age, integrated_yaw if t > 0.0 else None
 
     def loop(self) -> None:
         if serial is None or parse_frames is None:
@@ -185,8 +190,16 @@ class PixhawkYawReader:
                         for frame in parse_frames(buffer):
                             if frame.msgid != 30 or len(frame.payload) < 28:
                                 continue
+                            boot_ms = struct.unpack_from("<I", frame.payload, 0)[0]
                             yaw = struct.unpack_from("<f", frame.payload, 12)[0]
+                            yawspeed = struct.unpack_from("<f", frame.payload, 24)[0]
                             with self.lock:
+                                if self.last_boot_ms is not None:
+                                    dt_ms = (boot_ms - self.last_boot_ms) & 0xFFFFFFFF
+                                    dt = dt_ms / 1000.0
+                                    if 0.0 < dt < 0.25:
+                                        self.integrated_yaw = normalize_angle(self.integrated_yaw + yawspeed * dt)
+                                self.last_boot_ms = boot_ms
                                 self.latest_yaw = yaw
                                 self.latest_t = time.monotonic()
             except Exception as exc:
@@ -245,8 +258,8 @@ class DashboardBridge(Node):
             if self.origin is None:
                 self.origin = Pose2D(pose.x, pose.y, pose.yaw)
                 self.encoder_origin_yaw = encoder_yaw
-                pixhawk_yaw, _age = self.pixhawk_reader.get()
-                self.pixhawk_origin_yaw = pixhawk_yaw
+                pixhawk_yaw, _age, pixhawk_gyro_yaw = self.pixhawk_reader.get()
+                self.pixhawk_origin_yaw = self.selected_pixhawk_yaw(pixhawk_yaw, pixhawk_gyro_yaw)
             local = self.raw_to_local_locked(pose)
 
         self.publish_fused_odom(msg, pose)
@@ -271,11 +284,15 @@ class DashboardBridge(Node):
                 "raw_yaw": pose.yaw,
                 "encoder_yaw": encoder_yaw,
                 "pixhawk_yaw": yaw_info["pixhawk_yaw"],
+                "pixhawk_yaw_ros": yaw_info["pixhawk_yaw_ros"],
+                "pixhawk_gyro_yaw": yaw_info["pixhawk_gyro_yaw"],
                 "pixhawk_age_s": yaw_info["pixhawk_age_s"],
                 "yaw_source": yaw_info["yaw_source"],
                 "use_pixhawk_yaw": bool(self.imu_settings["use_pixhawk_yaw"]),
                 "pixhawk_weight": float(self.imu_settings["pixhawk_weight"]),
                 "encoder_weight": float(self.imu_settings["encoder_weight"]),
+                "pixhawk_yaw_mode": str(self.imu_settings["pixhawk_yaw_mode"]),
+                "pixhawk_yaw_sign": float(self.imu_settings["pixhawk_yaw_sign"]),
                 "linear_x": msg.twist.twist.linear.x,
                 "angular_z": msg.twist.twist.angular.z,
             }
@@ -306,20 +323,27 @@ class DashboardBridge(Node):
 
         encoder_delta = normalize_angle(encoder_yaw - encoder_origin) * self.geometry_yaw_scale()
         encoder_delta = normalize_angle(encoder_delta)
-        pixhawk_yaw, pixhawk_age = self.pixhawk_reader.get()
+        pixhawk_raw_yaw, pixhawk_age, pixhawk_gyro_yaw = self.pixhawk_reader.get()
+        pixhawk_yaw = self.selected_pixhawk_yaw(pixhawk_raw_yaw, pixhawk_gyro_yaw)
         pixhawk_timeout = float(self.imu_settings["pixhawk_timeout_s"])
+        pixhawk_weight = float(self.imu_settings["pixhawk_weight"])
+        encoder_weight = float(self.imu_settings["encoder_weight"])
 
-        if not bool(self.imu_settings["use_pixhawk_yaw"]):
+        if not bool(self.imu_settings["use_pixhawk_yaw"]) or pixhawk_weight <= 0.001:
             return normalize_angle(fused_origin + encoder_delta), {
                 "yaw_source": "encoder",
-                "pixhawk_yaw": pixhawk_yaw,
+                "pixhawk_yaw": pixhawk_raw_yaw,
+                "pixhawk_yaw_ros": pixhawk_yaw,
+                "pixhawk_gyro_yaw": pixhawk_gyro_yaw,
                 "pixhawk_age_s": pixhawk_age,
             }
 
         if pixhawk_yaw is None or pixhawk_age > pixhawk_timeout:
             return normalize_angle(fused_origin + encoder_delta), {
                 "yaw_source": "encoder_pixhawk_stale",
-                "pixhawk_yaw": pixhawk_yaw,
+                "pixhawk_yaw": pixhawk_raw_yaw,
+                "pixhawk_yaw_ros": pixhawk_yaw,
+                "pixhawk_gyro_yaw": pixhawk_gyro_yaw,
                 "pixhawk_age_s": pixhawk_age,
             }
 
@@ -327,8 +351,6 @@ class DashboardBridge(Node):
             self.pixhawk_origin_yaw = pixhawk_yaw
 
         pixhawk_delta = normalize_angle(pixhawk_yaw - self.pixhawk_origin_yaw)
-        pixhawk_weight = float(self.imu_settings["pixhawk_weight"])
-        encoder_weight = float(self.imu_settings["encoder_weight"])
         total = max(0.001, pixhawk_weight + encoder_weight)
         pixhawk_weight /= total
         encoder_weight /= total
@@ -338,9 +360,19 @@ class DashboardBridge(Node):
         fused_delta = math.atan2(sin_sum, cos_sum)
         return normalize_angle(fused_origin + fused_delta), {
             "yaw_source": "pixhawk_fused",
-            "pixhawk_yaw": pixhawk_yaw,
+            "pixhawk_yaw": pixhawk_raw_yaw,
+            "pixhawk_yaw_ros": pixhawk_yaw,
+            "pixhawk_gyro_yaw": pixhawk_gyro_yaw,
             "pixhawk_age_s": pixhawk_age,
         }
+
+    def selected_pixhawk_yaw(self, attitude_yaw: float | None, gyro_yaw: float | None) -> float | None:
+        mode = str(self.imu_settings.get("pixhawk_yaw_mode", "gyro")).strip().lower()
+        sign = float(self.imu_settings.get("pixhawk_yaw_sign", -1.0))
+        source_yaw = gyro_yaw if mode == "gyro" else attitude_yaw
+        if source_yaw is None:
+            return None
+        return normalize_angle(sign * source_yaw)
 
     def publish_fused_odom(self, msg: Odometry, pose: Pose2D) -> None:
         fused = copy.deepcopy(msg)
@@ -569,8 +601,8 @@ class DashboardBridge(Node):
         with self.lock:
             if self.encoder_pose is not None:
                 self.encoder_origin_yaw = self.encoder_pose.yaw
-            pixhawk_yaw, _age = self.pixhawk_reader.get()
-            self.pixhawk_origin_yaw = pixhawk_yaw
+            pixhawk_yaw, _age, pixhawk_gyro_yaw = self.pixhawk_reader.get()
+            self.pixhawk_origin_yaw = self.selected_pixhawk_yaw(pixhawk_yaw, pixhawk_gyro_yaw)
             if self.raw_pose is not None:
                 self.origin = Pose2D(self.raw_pose.x, self.raw_pose.y, self.raw_pose.yaw)
                 self.fused_origin_yaw = self.raw_pose.yaw
@@ -585,10 +617,16 @@ class DashboardBridge(Node):
         if pixhawk_weight + encoder_weight <= 0.001:
             pixhawk_weight = 0.80
             encoder_weight = 0.20
+        mode = str(settings.get("pixhawk_yaw_mode", "gyro")).strip().lower()
+        if mode not in {"gyro", "attitude"}:
+            mode = "gyro"
+        sign = -1.0 if float(settings.get("pixhawk_yaw_sign", -1.0)) < 0.0 else 1.0
         return {
             "use_pixhawk_yaw": bool(settings["use_pixhawk_yaw"]),
             "pixhawk_weight": pixhawk_weight,
             "encoder_weight": encoder_weight,
+            "pixhawk_yaw_mode": mode,
+            "pixhawk_yaw_sign": sign,
             "pixhawk_port": str(settings["pixhawk_port"]).strip() or str(IMU_DEFAULTS["pixhawk_port"]),
             "pixhawk_baud": max(1200, int(settings["pixhawk_baud"])),
             "pixhawk_timeout_s": min(5.0, max(0.10, float(settings["pixhawk_timeout_s"]))),
@@ -686,8 +724,8 @@ class DashboardBridge(Node):
                 self.fused_origin_yaw = self.raw_pose.yaw
             if self.encoder_pose is not None:
                 self.encoder_origin_yaw = self.encoder_pose.yaw
-            pixhawk_yaw, _age = self.pixhawk_reader.get()
-            self.pixhawk_origin_yaw = pixhawk_yaw
+            pixhawk_yaw, _age, pixhawk_gyro_yaw = self.pixhawk_reader.get()
+            self.pixhawk_origin_yaw = self.selected_pixhawk_yaw(pixhawk_yaw, pixhawk_gyro_yaw)
         self.get_logger().info("dashboard odom origin reset")
         self.broadcast({"type": "status", "level": "info", "message": "dashboard odom origin reset"})
 

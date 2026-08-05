@@ -32,15 +32,15 @@ controller_server:
       movement_time_allowance: 8.0
     goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.06
+      xy_goal_tolerance: 0.05
       yaw_goal_tolerance: 6.28
       stateful: false
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 0.22
-      lookahead_dist: 0.14
-      min_lookahead_dist: 0.07
-      max_lookahead_dist: 0.28
+      desired_linear_vel: 0.24
+      lookahead_dist: 0.15
+      min_lookahead_dist: 0.08
+      max_lookahead_dist: 0.32
       lookahead_time: 0.45
       transform_tolerance: 0.3
       use_velocity_scaled_lookahead_dist: true
@@ -56,7 +56,7 @@ controller_server:
       allow_reversing: false
       max_angular_accel: 3.4
       max_robot_pose_search_dist: 1.5
-      xy_goal_tolerance: 0.06
+      xy_goal_tolerance: 0.05
       stateful: false
 
 local_costmap:

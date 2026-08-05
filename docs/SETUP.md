@@ -291,7 +291,9 @@ ATTITUDE rate ~= 10 Hz
 
 This is integrable into odometry, but the yaw must be treated carefully:
 
-- Pixhawk yaw is an attitude estimate, usually absolute or compass-referenced.
+- Pixhawk `ATTITUDE.yaw` is an attitude estimate, usually absolute or
+  compass-referenced, and it follows the MAVLink/Pixhawk yaw convention rather
+  than ROS ENU yaw.
 - Wheel odometry yaw is local and starts wherever the robot was when odom was
   cleared.
 - The bridge should store a yaw offset when odometry is cleared:
@@ -299,8 +301,9 @@ This is integrable into odometry, but the yaw must be treated carefully:
 - Current integration uses Pixhawk yaw only to correct heading in Pi-side
   `/odom` and TF, while keeping ESP32 wheel odometry for `x`, `y`, and linear
   speed.
-- The dashboard defaults to `0.8` Pixhawk yaw weight and `0.2` encoder yaw
-  weight. Uncheck `Use Pixhawk yaw` to return to encoder-only heading.
+- The tested dashboard default is Pixhawk gyro-integrated yaw with sign `-1`,
+  weighted `0.8`, plus encoder yaw weighted `0.2`. Uncheck `Use Pixhawk yaw` to
+  return to encoder-only heading.
 - Geometry changes from the dashboard now affect the bridge-published `/odom`
   scaling and TF immediately. ESP32 control constants still require firmware
   rebuild/upload until a runtime firmware config service is added.
