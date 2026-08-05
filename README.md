@@ -151,11 +151,15 @@ Pixhawk yaw probe:
 
 ```bash
 python3 tools/pixhawk_mavlink_yaw_probe.py --port /dev/serial0 --baud 115200
+python3 tools/pixhawk_yaw_zero_test.py --port /dev/serial0 --baud 115200 --deadband 0.5 --heartbeat 0
+python3 tools/pixhawk_xy_zero_test.py --port /dev/serial0 --baud 115200 --source local --deadband 0.01 --heartbeat 0
 ```
 
 On the prototype, Pixhawk TELEM2 is readable on the Raspberry Pi UART as
 MAVLink 2 at `115200` baud. The probe decodes `ATTITUDE` yaw and
-`GLOBAL_POSITION_INT` heading without requiring `pymavlink`.
+`GLOBAL_POSITION_INT` heading without requiring `pymavlink`. The zero-test
+scripts use the first valid sample as the local origin, then print only when
+yaw or XY distance changes enough.
 
 Useful diagnostics:
 
