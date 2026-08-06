@@ -47,13 +47,14 @@ except ImportError:  # pragma: no cover - keeps old deployments importable
 RUNTIME_GEOMETRY_PATH = Path("/home/maker/euroboot/config/euroboot_runtime_geometry.json")
 RUNTIME_NAV2_PATH = Path("/home/maker/euroboot/config/euroboot_runtime_nav2.json")
 RUNTIME_IMU_PATH = Path("/home/maker/euroboot/config/euroboot_runtime_imu.json")
+RUNTIME_TURN_PATH = Path("/home/maker/euroboot/config/euroboot_runtime_turn.json")
 
 FIRMWARE_WHEEL_DIAMETER_M = 0.04586
 FIRMWARE_WHEEL_BASE_M = 0.15216
 FIRMWARE_COUNTS_PER_REV = 1400
 
 NAV2_PARAM_DEFAULTS = {
-    "desired_linear_vel": 0.28,
+    "desired_linear_vel": 0.24,
     "lookahead_dist": 0.20,
     "min_lookahead_dist": 0.10,
     "max_lookahead_dist": 0.40,
@@ -63,8 +64,8 @@ NAV2_PARAM_DEFAULTS = {
     "regulated_linear_scaling_min_radius": 0.36,
     "regulated_linear_scaling_min_speed": 0.055,
     "max_angular_accel": 3.30,
-    "xy_goal_tolerance": 0.05,
-    "yaw_goal_tolerance": 6.28,
+    "xy_goal_tolerance": 0.03,
+    "yaw_goal_tolerance": 5.28,
 }
 
 IMU_DEFAULTS = {
@@ -76,6 +77,18 @@ IMU_DEFAULTS = {
     "pixhawk_port": "/dev/serial0",
     "pixhawk_baud": 115200,
     "pixhawk_timeout_s": 0.75,
+}
+
+TURN_PARAM_DEFAULTS = {
+    "preturn_heading_error_rad": 1.20,
+    "preturn_min_distance_m": 0.08,
+    "turn_timeout_s": 6.0,
+    "turn_yaw_tolerance_rad": 0.045,
+    "turn_stable_samples": 2,
+    "turn_min_angular_speed": 0.25,
+    "turn_max_angular_speed": 1.55,
+    "turn_kp": 2.20,
+    "turn_settle_s": 0.04,
 }
 
 NAV2_PARAM_TARGETS = {
@@ -93,8 +106,6 @@ NAV2_PARAM_TARGETS = {
     "yaw_goal_tolerance": "goal_checker.yaw_goal_tolerance",
 }
 
-PRETURN_HEADING_ERROR_RAD = 1.20
-PRETURN_MIN_DISTANCE_M = 0.08
 WAYPOINT_GUARD_TOLERANCE_M = 0.08
 FINAL_POSITION_GUARD_TOLERANCE_M = 0.055
 
@@ -215,6 +226,7 @@ class DashboardBridge(Node):
         self.port = port
         self.odom_sub = self.create_subscription(Odometry, "/odom/unfiltered", self.odom_cb, 30)
         self.odom_pub = self.create_publisher(Odometry, "/odom", 30)
+        self.cmd_sub = self.create_subscription(Twist, "/cmd_vel", self.cmd_cb, 30)
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self.nav_client = ActionClient(self, FollowPath, "follow_path")
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -230,6 +242,7 @@ class DashboardBridge(Node):
         self.geometry = self.load_geometry()
         self.nav2_params = self.load_nav2_params()
         self.imu_settings = self.load_imu_settings()
+        self.turn_params = self.load_turn_params()
         self.pixhawk_reader = PixhawkYawReader(
             self,
             str(self.imu_settings["pixhawk_port"]),
@@ -241,10 +254,19 @@ class DashboardBridge(Node):
         self.shutdown_requested = False
         self.last_broadcast_t = 0.0
         self.last_tf_t = 0.0
+        self.last_cmd_linear_x = 0.0
+        self.last_cmd_angular_z = 0.0
+        self.last_cmd_t = time.monotonic()
 
         self.server_thread = threading.Thread(target=self.server_loop, daemon=True)
         self.server_thread.start()
         self.get_logger().info(f"Euroboot dashboard bridge listening on {host}:{port}")
+
+    def cmd_cb(self, msg: Twist) -> None:
+        with self.lock:
+            self.last_cmd_linear_x = float(msg.linear.x)
+            self.last_cmd_angular_z = float(msg.angular.z)
+            self.last_cmd_t = time.monotonic()
 
     def odom_cb(self, msg: Odometry) -> None:
         p = msg.pose.pose.position
@@ -262,6 +284,9 @@ class DashboardBridge(Node):
                 pixhawk_yaw, _age, pixhawk_gyro_yaw = self.pixhawk_reader.get()
                 self.pixhawk_origin_yaw = self.selected_pixhawk_yaw(pixhawk_yaw, pixhawk_gyro_yaw)
             local = self.raw_to_local_locked(pose)
+            cmd_linear_x = self.last_cmd_linear_x
+            cmd_angular_z = self.last_cmd_angular_z
+            cmd_age_s = time.monotonic() - self.last_cmd_t
 
         self.publish_fused_odom(msg, pose)
 
@@ -296,6 +321,9 @@ class DashboardBridge(Node):
                 "pixhawk_yaw_sign": float(self.imu_settings["pixhawk_yaw_sign"]),
                 "linear_x": msg.twist.twist.linear.x,
                 "angular_z": msg.twist.twist.angular.z,
+                "cmd_linear_x": cmd_linear_x,
+                "cmd_angular_z": cmd_angular_z,
+                "cmd_age_s": cmd_age_s,
             }
         )
 
@@ -480,6 +508,7 @@ class DashboardBridge(Node):
             self.send(client, {"type": "geometry", "geometry": self.geometry})
             self.send(client, {"type": "nav2_params", "params": self.nav2_params})
             self.send(client, {"type": "imu", "imu": self.imu_settings})
+            self.send(client, {"type": "turn_params", "params": self.turn_params})
             return
         if kind == "reset_odom":
             self.reset_local_origin()
@@ -492,6 +521,9 @@ class DashboardBridge(Node):
             return
         if kind == "set_imu":
             self.set_imu_settings(command.get("imu", {}))
+            return
+        if kind == "set_turn_params":
+            self.set_turn_params(command.get("params", {}))
             return
         if kind == "stop":
             self.cancel_requested = True
@@ -712,6 +744,52 @@ class DashboardBridge(Node):
             self.get_logger().info("Nav2 runtime parameters applied")
             self.broadcast({"type": "status", "level": "info", "message": "Nav2 parameters applied"})
 
+    def load_turn_params(self) -> dict[str, float]:
+        params = dict(TURN_PARAM_DEFAULTS)
+        try:
+            data = json.loads(RUNTIME_TURN_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return params
+
+        for key, value in TURN_PARAM_DEFAULTS.items():
+            try:
+                params[key] = float(data.get(key, value))
+            except (TypeError, ValueError):
+                pass
+        return self.validate_turn_params(params)
+
+    def set_turn_params(self, params: dict[str, Any]) -> None:
+        try:
+            updated = dict(self.turn_params)
+            for key in TURN_PARAM_DEFAULTS:
+                if key in params:
+                    updated[key] = float(params[key])
+            updated = self.validate_turn_params(updated)
+            stored = dict(updated)
+            stored["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            stored["note"] = "Runtime in-place turn controller parameters from Euroboot tuning tools."
+        except (TypeError, ValueError):
+            self.broadcast({"type": "status", "level": "error", "message": "invalid turn parameter values"})
+            return
+
+        self.turn_params = updated
+        RUNTIME_TURN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        RUNTIME_TURN_PATH.write_text(json.dumps(stored, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        self.broadcast({"type": "turn_params", "params": self.turn_params})
+        self.broadcast({"type": "status", "level": "info", "message": "turn parameters applied"})
+
+    def validate_turn_params(self, params: dict[str, float]) -> dict[str, float]:
+        params["preturn_heading_error_rad"] = min(math.pi, max(0.05, params["preturn_heading_error_rad"]))
+        params["preturn_min_distance_m"] = min(0.50, max(0.00, params["preturn_min_distance_m"]))
+        params["turn_timeout_s"] = min(15.0, max(1.0, params["turn_timeout_s"]))
+        params["turn_yaw_tolerance_rad"] = min(0.25, max(0.005, params["turn_yaw_tolerance_rad"]))
+        params["turn_stable_samples"] = int(min(10, max(1, round(params["turn_stable_samples"]))))
+        params["turn_min_angular_speed"] = min(0.80, max(0.04, params["turn_min_angular_speed"]))
+        params["turn_max_angular_speed"] = min(2.50, max(params["turn_min_angular_speed"], params["turn_max_angular_speed"]))
+        params["turn_kp"] = min(5.0, max(0.20, params["turn_kp"]))
+        params["turn_settle_s"] = min(0.30, max(0.00, params["turn_settle_s"]))
+        return params
+
     def reset_local_origin(self) -> None:
         with self.lock:
             self.rebase_origin_locked()
@@ -799,7 +877,9 @@ class DashboardBridge(Node):
             path_yaw = math.atan2(raw_wp.y - raw_start.y, raw_wp.x - raw_start.x)
             heading_error = normalize_angle(path_yaw - raw_start.yaw)
             segment_distance = math.hypot(raw_wp.x - raw_start.x, raw_wp.y - raw_start.y)
-            if segment_distance > PRETURN_MIN_DISTANCE_M and abs(heading_error) > PRETURN_HEADING_ERROR_RAD:
+            preturn_min_distance = float(self.turn_params["preturn_min_distance_m"])
+            preturn_heading_error = float(self.turn_params["preturn_heading_error_rad"])
+            if segment_distance > preturn_min_distance and abs(heading_error) > preturn_heading_error:
                 self.broadcast(
                     {
                         "type": "mission_status",
@@ -980,7 +1060,14 @@ class DashboardBridge(Node):
         return math.hypot(target.x - pose.x, target.y - pose.y)
 
     def rotate_to_heading(self, target_yaw: float) -> bool:
-        deadline = time.monotonic() + 9.0
+        params = dict(self.turn_params)
+        deadline = time.monotonic() + float(params["turn_timeout_s"])
+        tolerance = float(params["turn_yaw_tolerance_rad"])
+        stable_samples = int(params["turn_stable_samples"])
+        min_angular = float(params["turn_min_angular_speed"])
+        max_angular = float(params["turn_max_angular_speed"])
+        kp = float(params["turn_kp"])
+        settle_s = float(params["turn_settle_s"])
         stable_count = 0
         last_error = math.pi
         while rclpy.ok() and time.monotonic() < deadline and not self.cancel_requested:
@@ -992,12 +1079,12 @@ class DashboardBridge(Node):
 
             error = normalize_angle(target_yaw - pose.yaw)
             last_error = error
-            if abs(error) < 0.030:
+            if abs(error) < tolerance:
                 self.cmd_pub.publish(Twist())
                 stable_count += 1
-                if stable_count >= 3:
+                if stable_count >= stable_samples:
                     self.publish_stop()
-                    time.sleep(0.04)
+                    time.sleep(settle_s)
                     return True
                 time.sleep(0.03)
                 continue
@@ -1005,7 +1092,7 @@ class DashboardBridge(Node):
                 stable_count = 0
 
             cmd = Twist()
-            angular = max(0.18, min(1.15, abs(error) * 1.8))
+            angular = max(min_angular, min(max_angular, abs(error) * kp))
             cmd.angular.z = math.copysign(angular, error)
             self.cmd_pub.publish(cmd)
             time.sleep(0.03)

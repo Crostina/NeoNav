@@ -267,9 +267,9 @@ cross-track error, stop samples, oscillation count, and the Nav2/IMU parameters
 used. The current best baseline is:
 
 ```text
-runtime wheel_diameter_m=0.04
+runtime wheel_diameter_m=0.044
 runtime wheel_base_m=0.15216
-desired_linear_vel=0.28
+desired_linear_vel=0.24
 lookahead_dist=0.20
 min_lookahead_dist=0.10
 max_lookahead_dist=0.40
@@ -279,8 +279,15 @@ approach_velocity_scaling_dist=0.30
 regulated_linear_scaling_min_radius=0.36
 regulated_linear_scaling_min_speed=0.055
 max_angular_accel=3.30
-xy_goal_tolerance=0.05
-yaw_goal_tolerance=6.28
+xy_goal_tolerance=0.03
+yaw_goal_tolerance=5.28
+preturn_heading_error_rad=1.20
+turn_timeout_s=6.0
+turn_yaw_tolerance_rad=0.045
+turn_stable_samples=2
+turn_min_angular_speed=0.25
+turn_max_angular_speed=1.55
+turn_kp=2.20
 ```
 
 ## 9. Pixhawk Yaw Input

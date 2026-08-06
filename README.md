@@ -41,7 +41,7 @@ Firmware geometry is stored in `config/custom/euroboot_esp32_config.h`:
 - encoder CPR: `1400`
 - configured max wheel speed: `315 rpm`
 
-The current Pi/dashboard runtime odometry scale uses wheel diameter `0.04 m`,
+The current Pi/dashboard runtime odometry scale uses wheel diameter `0.044 m`,
 track width `0.15216 m`, encoder CPR `1400`, and max wheel speed `315 rpm`.
 That runtime value is what was used for the latest field tuning runs.
 
@@ -201,10 +201,11 @@ The phase-one stack is working on the small prototype:
 - debug runs can be saved for later analysis
 
 The current field baseline was selected from a 15-run 4-waypoint tuning session.
-Best saved run: `debug_runs/mission_20260806_000727_r12_best_earlier_approach.*`.
-The tuned Nav2 profile uses `0.28 m/s` desired speed, `0.20 m` lookahead,
+Best turn-track run: `debug_runs/mission_20260806_155820_turn09_v024_l020_decisive.*`.
+The tuned Nav2 profile uses `0.24 m/s` desired speed, `0.20 m` lookahead,
 `0.30 m` approach scaling distance, and Pixhawk gyro yaw fused at `0.8` with
-encoder yaw at `0.2`.
+encoder yaw at `0.2`. The Pi bridge also uses a runtime in-place turn controller
+for waypoint heading changes.
 
 The prototype is still limited by cheap motors, the L293D driver, wheel slip,
 chassis imbalance, and geometry mismatch. Future upgrades should include better

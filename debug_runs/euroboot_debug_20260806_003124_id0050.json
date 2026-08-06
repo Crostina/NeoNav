@@ -1,12 +1,15 @@
 {
-  "bridge_host": "192.168.137.85",
+  "bridge_host": "192.168.137.217",
   "bridge_port": "8765",
+  "created_at": "2026-08-06T00:31:24",
+  "finished_at": "2026-08-06T00:31:30",
   "geometry": {
     "counts_per_rev": 1400,
     "max_rpm": 315,
     "wheel_base_m": 0.15216,
-    "wheel_diameter_m": 0.044
+    "wheel_diameter_m": 0.04
   },
+  "id": 50,
   "imu": {
     "encoder_weight": 0.2,
     "pixhawk_baud": 115200,
@@ -19,7 +22,7 @@
   },
   "nav2_params": {
     "approach_velocity_scaling_dist": 0.3,
-    "desired_linear_vel": 0.24,
+    "desired_linear_vel": 0.28,
     "lookahead_dist": 0.2,
     "lookahead_time": 0.5,
     "max_angular_accel": 3.3,
@@ -28,9 +31,17 @@
     "min_lookahead_dist": 0.1,
     "regulated_linear_scaling_min_radius": 0.36,
     "regulated_linear_scaling_min_speed": 0.055,
-    "xy_goal_tolerance": 0.03,
-    "yaw_goal_tolerance": 5.28
+    "xy_goal_tolerance": 0.05,
+    "yaw_goal_tolerance": 6.28
   },
-  "next_debug_id": 61,
-  "save_debug": true
+  "note": "Dashboard debug record. Runtime geometry does not imply ESP32 firmware constants were flashed.",
+  "status": "done",
+  "waypoints": [
+    {
+      "final_yaw": null,
+      "x": 1.0,
+      "y": 0.0,
+      "yaw": 0.0
+    }
+  ]
 }
