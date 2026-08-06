@@ -1,0 +1,7 @@
+label,source,score,duration_s,final_pos_error_m,final_yaw_error_deg,max_cross_track_m,mean_cross_track_m,turn_count,turn_translation_total_m,turn_translation_max_m,turn_wheel_abs_balance_mean_mps,turn_linear_leak_ratio_mean,status,notes
+dashboard_bad66_open_square,debug_runs\euroboot_debug_20260806_162053_id0066.csv,,,,,,,2,0.2047,0.1042,0.0656,1.029,dashboard_log,old dashboard recorder; no full scoring columns
+dashboard_bad67_forced_square,debug_runs\euroboot_debug_20260806_162343_id0067.csv,,,,,,,4,0.3482,0.1062,0.0605,0.719,dashboard_log,old dashboard recorder; no full scoring columns
+dashboard_bad68_forced_square,debug_runs\euroboot_debug_20260806_162504_id0068.csv,,,,,,,4,0.3539,0.1069,0.0582,0.805,dashboard_log,old dashboard recorder; no full scoring columns
+small_square_clean01_balanced_turn,debug_runs\mission_20260806_164649_small_square_clean01_balanced_turn.json,34.273,32.595,0.0273,0.49,0.0491,0.0099,4,0.03,0.0124,0.0083,0.172,done,scripted mission runner
+small_square_clean02_tighter_xy,debug_runs\mission_20260806_164842_small_square_clean02_tighter_xy.json,29.681,32.199,0.0172,1.4,0.0222,0.008,4,0.0259,0.0085,0.0078,0.142,done,scripted mission runner
+small_square_clean03_v028,debug_runs\mission_20260806_165126_small_square_clean03_v028.json,31.214,30.578,0.0184,2.31,0.0236,0.008,4,0.029,0.0088,0.0079,0.172,done,scripted mission runner

@@ -39,7 +39,7 @@ DEFAULT_NAV2_PARAMS = {
     "regulated_linear_scaling_min_radius": 0.36,
     "regulated_linear_scaling_min_speed": 0.055,
     "max_angular_accel": 3.30,
-    "xy_goal_tolerance": 0.03,
+    "xy_goal_tolerance": 0.02,
     "yaw_goal_tolerance": 5.28,
 }
 
@@ -85,6 +85,11 @@ def normalize_angle(angle: float) -> float:
     while angle < -math.pi:
         angle += 2.0 * math.pi
     return angle
+
+
+def differential_wheel_speeds(linear_x: float, angular_z: float, wheel_base_m: float) -> tuple[float, float]:
+    half_track = wheel_base_m * 0.5
+    return linear_x - angular_z * half_track, linear_x + angular_z * half_track
 
 
 @dataclass
@@ -229,6 +234,7 @@ class EurobootDashboard:
 
         self.add_waypoint_mode = tk.BooleanVar(value=True)
         self.save_debug_var = tk.BooleanVar(value=bool(self.settings.get("save_debug", False)))
+        self.auto_corner_heading_var = tk.BooleanVar(value=bool(self.settings.get("auto_corner_heading", True)))
         self.use_pixhawk_yaw_var = tk.BooleanVar(value=bool(self.imu_settings.get("use_pixhawk_yaw", True)))
         self.scale_px_per_m = tk.DoubleVar(value=260.0)
         self.status_text = tk.StringVar(value="Offline. Start the Pi bridge, then connect.")
@@ -359,7 +365,11 @@ class EurobootDashboard:
         ttk.Button(mission_buttons, text="Run", command=self.run_mission).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ttk.Button(mission_buttons, text="Stop", command=self.stop_robot).grid(row=0, column=1, sticky="ew", padx=4)
         ttk.Button(mission_buttons, text="Clear Odom", command=self.clear_robot_odom).grid(row=0, column=2, sticky="ew", padx=(4, 0))
-        ttk.Checkbutton(side, text="Save Debug Data", variable=self.save_debug_var, command=self.save_settings).grid(row=9, column=0, sticky="w")
+        mission_options = ttk.Frame(side)
+        mission_options.grid(row=9, column=0, sticky="ew")
+        mission_options.columnconfigure((0, 1), weight=1)
+        ttk.Checkbutton(mission_options, text="Save Debug Data", variable=self.save_debug_var, command=self.save_settings).grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(mission_options, text="Auto Corner Heading", variable=self.auto_corner_heading_var, command=self.save_settings).grid(row=0, column=1, sticky="w")
         ttk.Label(side, textvariable=self.debug_text, style="Small.TLabel").grid(row=10, column=0, sticky="w", pady=(2, 14))
 
         self._section(side, 11, "Robot Geometry")
@@ -564,7 +574,12 @@ class EurobootDashboard:
                 yaw = math.atan2(next_point.y_m - point.y_m, next_point.x_m - point.x_m)
             else:
                 yaw = self.pose.yaw_rad
-            final_yaw = None if point.final_yaw_deg is None else math.radians(point.final_yaw_deg)
+            if point.final_yaw_deg is not None:
+                final_yaw = math.radians(point.final_yaw_deg)
+            elif self.auto_corner_heading_var.get() and index + 1 < len(self.waypoints):
+                final_yaw = math.atan2(next_point.y_m - point.y_m, next_point.x_m - point.x_m)
+            else:
+                final_yaw = None
             payload.append(
                 {
                     "x": point.x_m,
@@ -775,6 +790,7 @@ class EurobootDashboard:
                 "bridge_host": self.vars["bridge_host"].get().strip(),
                 "bridge_port": self.vars["bridge_port"].get().strip(),
                 "save_debug": bool(self.save_debug_var.get()),
+                "auto_corner_heading": bool(self.auto_corner_heading_var.get()),
                 "geometry": self.geometry_payload(),
                 "imu": self.imu_settings,
                 "nav2_params": self.nav2_params,
@@ -804,6 +820,7 @@ class EurobootDashboard:
             "imu": self.imu_settings,
             "nav2_params": self.nav2_params,
             "waypoints": waypoints,
+            "auto_corner_heading": bool(self.auto_corner_heading_var.get()),
             "bridge_host": self.vars["bridge_host"].get().strip(),
             "bridge_port": self.vars["bridge_port"].get().strip(),
             "note": "Dashboard debug record. Runtime geometry does not imply ESP32 firmware constants were flashed.",
@@ -833,6 +850,15 @@ class EurobootDashboard:
                 "pixhawk_yaw_sign",
                 "linear_x_mps",
                 "angular_z_radps",
+                "cmd_linear_x_mps",
+                "cmd_angular_z_radps",
+                "cmd_age_s",
+                "actual_left_mps",
+                "actual_right_mps",
+                "cmd_left_mps",
+                "cmd_right_mps",
+                "turn_abs_balance_error_mps",
+                "turn_linear_leak_ratio",
                 "event_type",
                 "event_message",
             ],
@@ -843,6 +869,18 @@ class EurobootDashboard:
     def write_debug_odom(self, message: dict) -> None:
         if self.debug_writer is None:
             return
+        linear_x = float(message.get("linear_x", 0.0) or 0.0)
+        angular_z = float(message.get("angular_z", 0.0) or 0.0)
+        cmd_linear_x = float(message.get("cmd_linear_x", 0.0) or 0.0)
+        cmd_angular_z = float(message.get("cmd_angular_z", 0.0) or 0.0)
+        actual_left, actual_right = differential_wheel_speeds(linear_x, angular_z, self.geometry.wheel_base_m)
+        cmd_left, cmd_right = differential_wheel_speeds(cmd_linear_x, cmd_angular_z, self.geometry.wheel_base_m)
+        turn_tangent = abs(angular_z) * self.geometry.wheel_base_m * 0.5
+        turn_balance = ""
+        turn_leak = ""
+        if abs(angular_z) > 0.12:
+            turn_balance = abs(abs(actual_left) - abs(actual_right))
+            turn_leak = abs(linear_x) / max(0.001, turn_tangent)
         self.debug_writer.writerow(
             {
                 "t_bridge": message.get("t", ""),
@@ -865,6 +903,15 @@ class EurobootDashboard:
                 "pixhawk_yaw_sign": message.get("pixhawk_yaw_sign", ""),
                 "linear_x_mps": message.get("linear_x", ""),
                 "angular_z_radps": message.get("angular_z", ""),
+                "cmd_linear_x_mps": message.get("cmd_linear_x", ""),
+                "cmd_angular_z_radps": message.get("cmd_angular_z", ""),
+                "cmd_age_s": message.get("cmd_age_s", ""),
+                "actual_left_mps": actual_left,
+                "actual_right_mps": actual_right,
+                "cmd_left_mps": cmd_left,
+                "cmd_right_mps": cmd_right,
+                "turn_abs_balance_error_mps": turn_balance,
+                "turn_linear_leak_ratio": turn_leak,
                 "event_type": "odom",
                 "event_message": "",
             }
@@ -895,6 +942,15 @@ class EurobootDashboard:
                 "pixhawk_yaw_sign": self.imu_settings.get("pixhawk_yaw_sign", ""),
                 "linear_x_mps": "",
                 "angular_z_radps": "",
+                "cmd_linear_x_mps": "",
+                "cmd_angular_z_radps": "",
+                "cmd_age_s": "",
+                "actual_left_mps": "",
+                "actual_right_mps": "",
+                "cmd_left_mps": "",
+                "cmd_right_mps": "",
+                "turn_abs_balance_error_mps": "",
+                "turn_linear_leak_ratio": "",
                 "event_type": "mission_status",
                 "event_message": message.get("message", ""),
             }

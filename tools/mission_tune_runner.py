@@ -35,7 +35,15 @@ TRACKS: dict[str, list[dict[str, float | None]]] = {
         {"x": -0.004, "y": -0.504, "final_yaw_deg": None},
         {"x": 0.000, "y": 0.000, "final_yaw_deg": 0.0},
     ],
+    "small_square": [
+        {"x": 0.500, "y": 0.000, "final_yaw_deg": -90.0},
+        {"x": 0.500, "y": -0.500, "final_yaw_deg": 180.0},
+        {"x": 0.000, "y": -0.500, "final_yaw_deg": 90.0},
+        {"x": 0.000, "y": 0.000, "final_yaw_deg": 0.0},
+    ],
 }
+
+WHEEL_BASE_M = 0.15216
 
 
 @dataclass
@@ -67,6 +75,11 @@ def f(row: dict[str, str], key: str, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def differential_wheel_speeds(linear_x: float, angular_z: float, wheel_base_m: float = WHEEL_BASE_M) -> tuple[float, float]:
+    half_track = wheel_base_m * 0.5
+    return linear_x - angular_z * half_track, linear_x + angular_z * half_track
 
 
 def row_time(row: dict[str, str]) -> float:
@@ -256,6 +269,21 @@ def build_turn_episodes(odom: list[dict[str, str]]) -> list[dict[str, Any]]:
         actual_wz = [abs(f(row, "angular_z_radps")) for row in rows]
         cmd_vx = [abs(f(row, "cmd_linear_x_mps", 0.0)) for row in rows]
         cmd_wz = [abs(f(row, "cmd_angular_z_radps", 0.0)) for row in rows]
+        actual_wheels = [
+            differential_wheel_speeds(f(row, "linear_x_mps"), f(row, "angular_z_radps"))
+            for row in rows
+        ]
+        cmd_wheels = [
+            differential_wheel_speeds(f(row, "cmd_linear_x_mps", 0.0), f(row, "cmd_angular_z_radps", 0.0))
+            for row in rows
+        ]
+        actual_balance = [abs(abs(left) - abs(right)) for left, right in actual_wheels]
+        cmd_balance = [abs(abs(left) - abs(right)) for left, right in cmd_wheels]
+        leak_ratios = [
+            abs(f(row, "linear_x_mps")) / max(0.001, abs(f(row, "angular_z_radps")) * WHEEL_BASE_M * 0.5)
+            for row in rows
+            if abs(f(row, "angular_z_radps")) > 0.12
+        ]
         radius = path_translation / max(0.001, abs(yaw_change))
         target_errors = [abs(f(row, "turn_yaw_error_rad", float("nan"))) for row in rows]
         target_errors = [value for value in target_errors if math.isfinite(value)]
@@ -273,6 +301,13 @@ def build_turn_episodes(odom: list[dict[str, str]]) -> list[dict[str, Any]]:
                 "mean_abs_actual_wz_radps": round(sum(actual_wz) / max(1, len(actual_wz)), 4),
                 "mean_abs_cmd_vx_mps": round(sum(cmd_vx) / max(1, len(cmd_vx)), 4),
                 "mean_abs_cmd_wz_radps": round(sum(cmd_wz) / max(1, len(cmd_wz)), 4),
+                "mean_actual_left_mps": round(sum(left for left, _right in actual_wheels) / max(1, len(actual_wheels)), 4),
+                "mean_actual_right_mps": round(sum(right for _left, right in actual_wheels) / max(1, len(actual_wheels)), 4),
+                "mean_cmd_left_mps": round(sum(left for left, _right in cmd_wheels) / max(1, len(cmd_wheels)), 4),
+                "mean_cmd_right_mps": round(sum(right for _left, right in cmd_wheels) / max(1, len(cmd_wheels)), 4),
+                "mean_actual_wheel_abs_balance_mps": round(sum(actual_balance) / max(1, len(actual_balance)), 4),
+                "mean_cmd_wheel_abs_balance_mps": round(sum(cmd_balance) / max(1, len(cmd_balance)), 4),
+                "mean_turn_linear_leak_ratio": round(sum(leak_ratios) / max(1, len(leak_ratios)), 3),
                 "final_target_yaw_error_deg": None
                 if not target_errors
                 else round(math.degrees(target_errors[-1]), 2),
@@ -359,6 +394,16 @@ def score_rows(rows: list[dict[str, str]], status: str, payload: list[dict[str, 
     turn_translation_total = sum(float(ep["path_translation_m"]) for ep in turn_episodes)
     turn_translation_max = max((float(ep["path_translation_m"]) for ep in turn_episodes), default=0.0)
     turn_radius_max = max((float(ep["estimated_radius_m"]) for ep in turn_episodes), default=0.0)
+    turn_balance_mean = (
+        sum(float(ep["mean_actual_wheel_abs_balance_mps"]) for ep in turn_episodes) / len(turn_episodes)
+        if turn_episodes
+        else 0.0
+    )
+    turn_leak_mean = (
+        sum(float(ep["mean_turn_linear_leak_ratio"]) for ep in turn_episodes) / len(turn_episodes)
+        if turn_episodes
+        else 0.0
+    )
     mean_heading_error_deg = math.degrees(sum(heading_errors) / len(heading_errors)) if heading_errors else 0.0
 
     waypoint_metrics: list[dict[str, Any]] = []
@@ -389,6 +434,8 @@ def score_rows(rows: list[dict[str, str]], status: str, payload: list[dict[str, 
         + 45.0 * turn_translation_total
         + 35.0 * turn_translation_max
         + 10.0 * turn_radius_max
+        + 30.0 * turn_balance_mean
+        + 2.5 * turn_leak_mean
         + 8.0 * linear_cmd_error
         + 1.5 * angular_cmd_error
         + 0.40 * sign_changes
@@ -422,6 +469,8 @@ def score_rows(rows: list[dict[str, str]], status: str, payload: list[dict[str, 
         "turn_translation_total_m": round(turn_translation_total, 4),
         "turn_translation_max_m": round(turn_translation_max, 4),
         "turn_radius_max_m": round(turn_radius_max, 4),
+        "turn_wheel_abs_balance_mean_mps": round(turn_balance_mean, 4),
+        "turn_linear_leak_ratio_mean": round(turn_leak_mean, 3),
         "turn_episodes": turn_episodes,
         "waypoints": waypoint_metrics,
         "manual_intervention_suspected": bool(jumps),
@@ -451,7 +500,17 @@ def make_plot(csv_path: Path, payload: list[dict[str, Any]], metrics: dict[str, 
     actual_wz = [f(row, "angular_z_radps") for row in rows]
     cmd_vx = [f(row, "cmd_linear_x_mps") for row in rows]
     cmd_wz = [f(row, "cmd_angular_z_radps") for row in rows]
-    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+    actual_wheels = [differential_wheel_speeds(vx, wz) for vx, wz in zip(actual_vx, actual_wz)]
+    cmd_wheels = [differential_wheel_speeds(vx, wz) for vx, wz in zip(cmd_vx, cmd_wz)]
+    turn_balance = [abs(abs(left) - abs(right)) for left, right in actual_wheels]
+    turn_leak = [
+        abs(vx) / max(0.001, abs(wz) * WHEEL_BASE_M * 0.5)
+        if abs(wz) > 0.12
+        else 0.0
+        for vx, wz in zip(actual_vx, actual_wz)
+    ]
+
+    fig, axes = plt.subplots(3, 2, figsize=(12, 11))
     ax = axes[0][0]
     ax.plot([p[0] for p in path], [p[1] for p in path], "k--", label="planned")
     ax.plot(xs, ys, color="#2563eb", label="actual")
@@ -488,6 +547,25 @@ def make_plot(csv_path: Path, payload: list[dict[str, Any]], metrics: dict[str, 
     )
     ax.set_xlabel("time (s)")
     ax.set_ylabel("m")
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+
+    ax = axes[2][0]
+    ax.plot(ts, [left for left, _right in actual_wheels], label="actual left")
+    ax.plot(ts, [right for _left, right in actual_wheels], label="actual right")
+    ax.plot(ts, [left for left, _right in cmd_wheels], "--", label="cmd left")
+    ax.plot(ts, [right for _left, right in cmd_wheels], "--", label="cmd right")
+    ax.set_title("Inferred Wheel Speeds")
+    ax.set_xlabel("time (s)")
+    ax.set_ylabel("m/s")
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+
+    ax = axes[2][1]
+    ax.plot(ts, turn_balance, label="abs wheel balance error")
+    ax.plot(ts, turn_leak, label="linear leak ratio")
+    ax.set_title("Turn Cleanliness")
+    ax.set_xlabel("time (s)")
     ax.grid(True, alpha=0.25)
     ax.legend()
 
@@ -569,6 +647,12 @@ def main() -> int:
         "cmd_linear_x_mps",
         "cmd_angular_z_radps",
         "cmd_age_s",
+        "actual_left_mps",
+        "actual_right_mps",
+        "cmd_left_mps",
+        "cmd_right_mps",
+        "turn_abs_balance_error_mps",
+        "turn_linear_leak_ratio",
         "nearest_segment",
         "along_track_m",
         "segment_progress_m",
@@ -617,6 +701,18 @@ def main() -> int:
                 x = float(message.get("x", 0.0))
                 y = float(message.get("y", 0.0))
                 yaw = float(message.get("yaw", 0.0))
+                linear_x = float(message.get("linear_x", 0.0) or 0.0)
+                angular_z = float(message.get("angular_z", 0.0) or 0.0)
+                cmd_linear_x = float(message.get("cmd_linear_x", 0.0) or 0.0)
+                cmd_angular_z = float(message.get("cmd_angular_z", 0.0) or 0.0)
+                actual_left, actual_right = differential_wheel_speeds(linear_x, angular_z)
+                cmd_left, cmd_right = differential_wheel_speeds(cmd_linear_x, cmd_angular_z)
+                turn_tangent = abs(angular_z) * WHEEL_BASE_M * 0.5
+                turn_balance = ""
+                turn_leak = ""
+                if abs(angular_z) > 0.12:
+                    turn_balance = abs(abs(actual_left) - abs(actual_right))
+                    turn_leak = abs(linear_x) / max(0.001, turn_tangent)
                 if 1 <= current_index < len(path):
                     projection = project_to_segment(x, y, path, current_index)
                 else:
@@ -652,11 +748,17 @@ def main() -> int:
                         "encoder_weight": message.get("encoder_weight", ""),
                         "pixhawk_yaw_mode": message.get("pixhawk_yaw_mode", ""),
                         "pixhawk_yaw_sign": message.get("pixhawk_yaw_sign", ""),
-                        "linear_x_mps": message.get("linear_x", ""),
-                        "angular_z_radps": message.get("angular_z", ""),
-                        "cmd_linear_x_mps": message.get("cmd_linear_x", ""),
-                        "cmd_angular_z_radps": message.get("cmd_angular_z", ""),
+                        "linear_x_mps": linear_x,
+                        "angular_z_radps": angular_z,
+                        "cmd_linear_x_mps": cmd_linear_x,
+                        "cmd_angular_z_radps": cmd_angular_z,
                         "cmd_age_s": message.get("cmd_age_s", ""),
+                        "actual_left_mps": actual_left,
+                        "actual_right_mps": actual_right,
+                        "cmd_left_mps": cmd_left,
+                        "cmd_right_mps": cmd_right,
+                        "turn_abs_balance_error_mps": turn_balance,
+                        "turn_linear_leak_ratio": turn_leak,
                         "nearest_segment": projection.segment,
                         "along_track_m": projection.along_m,
                         "segment_progress_m": projection.segment_progress_m,

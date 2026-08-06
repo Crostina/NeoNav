@@ -1,13 +1,15 @@
 {
-  "auto_corner_heading": true,
   "bridge_host": "192.168.137.85",
   "bridge_port": "8765",
+  "created_at": "2026-08-06T16:20:53",
+  "finished_at": "2026-08-06T16:21:16",
   "geometry": {
     "counts_per_rev": 1400,
     "max_rpm": 315,
     "wheel_base_m": 0.15216,
     "wheel_diameter_m": 0.044
   },
+  "id": 66,
   "imu": {
     "encoder_weight": 0.2,
     "pixhawk_baud": 115200,
@@ -29,9 +31,29 @@
     "min_lookahead_dist": 0.1,
     "regulated_linear_scaling_min_radius": 0.36,
     "regulated_linear_scaling_min_speed": 0.055,
-    "xy_goal_tolerance": 0.02,
+    "xy_goal_tolerance": 0.03,
     "yaw_goal_tolerance": 5.28
   },
-  "next_debug_id": 69,
-  "save_debug": true
+  "note": "Dashboard debug record. Runtime geometry does not imply ESP32 firmware constants were flashed.",
+  "status": "done",
+  "waypoints": [
+    {
+      "final_yaw": null,
+      "x": 0.75,
+      "y": -0.0038461538461538464,
+      "yaw": -0.005128160174234396
+    },
+    {
+      "final_yaw": null,
+      "x": 0.7538461538461538,
+      "y": -0.75,
+      "yaw": -1.5656417332723562
+    },
+    {
+      "final_yaw": null,
+      "x": -0.0038461538461538464,
+      "y": -0.75,
+      "yaw": 3.141592653589793
+    }
+  ]
 }

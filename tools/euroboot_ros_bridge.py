@@ -64,7 +64,7 @@ NAV2_PARAM_DEFAULTS = {
     "regulated_linear_scaling_min_radius": 0.36,
     "regulated_linear_scaling_min_speed": 0.055,
     "max_angular_accel": 3.30,
-    "xy_goal_tolerance": 0.03,
+    "xy_goal_tolerance": 0.02,
     "yaw_goal_tolerance": 5.28,
 }
 
@@ -82,12 +82,15 @@ IMU_DEFAULTS = {
 TURN_PARAM_DEFAULTS = {
     "preturn_heading_error_rad": 1.20,
     "preturn_min_distance_m": 0.08,
+    "final_position_correction_enabled": 0.0,
     "turn_timeout_s": 6.0,
     "turn_yaw_tolerance_rad": 0.045,
     "turn_stable_samples": 2,
     "turn_min_angular_speed": 0.25,
     "turn_max_angular_speed": 1.55,
     "turn_kp": 2.20,
+    "turn_linear_balance_kp": 1.00,
+    "turn_linear_balance_limit_mps": 0.060,
     "turn_settle_s": 0.04,
 }
 
@@ -257,6 +260,8 @@ class DashboardBridge(Node):
         self.last_cmd_linear_x = 0.0
         self.last_cmd_angular_z = 0.0
         self.last_cmd_t = time.monotonic()
+        self.last_actual_linear_x = 0.0
+        self.last_actual_angular_z = 0.0
 
         self.server_thread = threading.Thread(target=self.server_loop, daemon=True)
         self.server_thread.start()
@@ -287,6 +292,8 @@ class DashboardBridge(Node):
             cmd_linear_x = self.last_cmd_linear_x
             cmd_angular_z = self.last_cmd_angular_z
             cmd_age_s = time.monotonic() - self.last_cmd_t
+            self.last_actual_linear_x = float(msg.twist.twist.linear.x)
+            self.last_actual_angular_z = float(msg.twist.twist.angular.z)
 
         self.publish_fused_odom(msg, pose)
 
@@ -781,12 +788,15 @@ class DashboardBridge(Node):
     def validate_turn_params(self, params: dict[str, float]) -> dict[str, float]:
         params["preturn_heading_error_rad"] = min(math.pi, max(0.05, params["preturn_heading_error_rad"]))
         params["preturn_min_distance_m"] = min(0.50, max(0.00, params["preturn_min_distance_m"]))
+        params["final_position_correction_enabled"] = 1.0 if params["final_position_correction_enabled"] >= 0.5 else 0.0
         params["turn_timeout_s"] = min(15.0, max(1.0, params["turn_timeout_s"]))
         params["turn_yaw_tolerance_rad"] = min(0.25, max(0.005, params["turn_yaw_tolerance_rad"]))
         params["turn_stable_samples"] = int(min(10, max(1, round(params["turn_stable_samples"]))))
         params["turn_min_angular_speed"] = min(0.80, max(0.04, params["turn_min_angular_speed"]))
         params["turn_max_angular_speed"] = min(2.50, max(params["turn_min_angular_speed"], params["turn_max_angular_speed"]))
         params["turn_kp"] = min(5.0, max(0.20, params["turn_kp"]))
+        params["turn_linear_balance_kp"] = min(3.0, max(0.0, params["turn_linear_balance_kp"]))
+        params["turn_linear_balance_limit_mps"] = min(0.12, max(0.0, params["turn_linear_balance_limit_mps"]))
         params["turn_settle_s"] = min(0.30, max(0.00, params["turn_settle_s"]))
         return params
 
@@ -945,7 +955,11 @@ class DashboardBridge(Node):
                     self.get_logger().error(f"mission failed: final alignment at waypoint {index} timed out")
                     self.broadcast({"type": "mission_status", "state": "error", "message": f"final alignment at waypoint {index} timed out"})
                     return
-                if self.distance_to_raw_target(raw_final) > FINAL_POSITION_GUARD_TOLERANCE_M:
+                final_position_error = self.distance_to_raw_target(raw_final)
+                if (
+                    float(self.turn_params["final_position_correction_enabled"]) >= 0.5
+                    and final_position_error > FINAL_POSITION_GUARD_TOLERANCE_M
+                ):
                     with self.lock:
                         raw_start = self.raw_pose or raw_final
                         raw_final = self.local_to_raw_locked(Pose2D(local_wp.x, local_wp.y, local_wp.final_yaw))
@@ -974,6 +988,20 @@ class DashboardBridge(Node):
                     with self.lock:
                         raw_final = self.local_to_raw_locked(Pose2D(local_wp.x, local_wp.y, local_wp.final_yaw))
                     self.rotate_to_heading(raw_final.yaw)
+                elif final_position_error > FINAL_POSITION_GUARD_TOLERANCE_M:
+                    self.get_logger().warn(
+                        f"final alignment at waypoint {index} drifted {final_position_error:.3f} m; "
+                        "skipping same-waypoint correction"
+                    )
+                    self.broadcast(
+                        {
+                            "type": "mission_status",
+                            "state": "reached",
+                            "index": index,
+                            "total": len(waypoints),
+                            "message": f"waypoint {index} turn drift {final_position_error:.2f} m; next leg starts from actual pose",
+                        }
+                    )
 
             self.broadcast(
                 {
@@ -1067,12 +1095,17 @@ class DashboardBridge(Node):
         min_angular = float(params["turn_min_angular_speed"])
         max_angular = float(params["turn_max_angular_speed"])
         kp = float(params["turn_kp"])
+        balance_kp = float(params["turn_linear_balance_kp"])
+        balance_limit = float(params["turn_linear_balance_limit_mps"])
         settle_s = float(params["turn_settle_s"])
         stable_count = 0
         last_error = math.pi
+        self.publish_stop()
+        time.sleep(0.08)
         while rclpy.ok() and time.monotonic() < deadline and not self.cancel_requested:
             with self.lock:
                 pose = self.raw_pose
+                actual_linear_x = self.last_actual_linear_x
             if pose is None:
                 time.sleep(0.03)
                 continue
@@ -1094,6 +1127,8 @@ class DashboardBridge(Node):
             cmd = Twist()
             angular = max(min_angular, min(max_angular, abs(error) * kp))
             cmd.angular.z = math.copysign(angular, error)
+            if balance_kp > 0.0 and balance_limit > 0.0:
+                cmd.linear.x = max(-balance_limit, min(balance_limit, -balance_kp * actual_linear_x))
             self.cmd_pub.publish(cmd)
             time.sleep(0.03)
 

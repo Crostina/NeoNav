@@ -1,0 +1,264 @@
+{
+  "created_at": "2026-08-06T16:51:26",
+  "csv": "C:\\Users\\Golde\\Documents\\PlatformIO\\Projects\\EUROBOOT\\debug_runs\\mission_20260806_165126_small_square_clean03_v028.csv",
+  "finished_at": "2026-08-06T16:52:02",
+  "host": "192.168.137.85",
+  "imu": {},
+  "label": "small_square_clean03_v028",
+  "metrics": {
+    "duration_s": 30.578,
+    "final_pos_error_m": 0.0184,
+    "final_x_m": 0.009352805731103727,
+    "final_y_m": -0.015825785174210953,
+    "final_yaw_deg": -2.31,
+    "final_yaw_error_deg": 2.31,
+    "jump_samples": 0,
+    "manual_intervention_suspected": false,
+    "max_cross_track_m": 0.0236,
+    "mean_abs_angular_cmd_error_radps": 0.3813,
+    "mean_abs_linear_cmd_error_mps": 0.0242,
+    "mean_cross_track_m": 0.008,
+    "mean_heading_error_deg": 5.36,
+    "oscillation_sign_changes": 23,
+    "progress_reversals": 0,
+    "score": 31.214,
+    "signed_cross_track_mean_m": -0.0076,
+    "status": "done",
+    "stop_samples": 57,
+    "turn_episode_count": 4,
+    "turn_episodes": [
+      {
+        "duration_s": 3.08,
+        "estimated_radius_m": 0.0036,
+        "final_target_yaw_error_deg": 0.37,
+        "index": 1,
+        "max_abs_actual_vx_mps": 0.0184,
+        "mean_abs_actual_vx_mps": 0.0038,
+        "mean_abs_actual_wz_radps": 0.5189,
+        "mean_abs_cmd_vx_mps": 0.0028,
+        "mean_abs_cmd_wz_radps": 1.1365,
+        "mean_actual_left_mps": 0.0396,
+        "mean_actual_right_mps": -0.0394,
+        "mean_actual_wheel_abs_balance_mps": 0.0077,
+        "mean_cmd_left_mps": 0.0873,
+        "mean_cmd_right_mps": -0.0857,
+        "mean_cmd_wheel_abs_balance_mps": 0.0055,
+        "mean_turn_linear_leak_ratio": 0.158,
+        "net_translation_m": 0.0028,
+        "path_translation_m": 0.0059,
+        "start_s": 7248.805,
+        "yaw_change_deg": -92.6
+      },
+      {
+        "duration_s": 2.941,
+        "estimated_radius_m": 0.0039,
+        "final_target_yaw_error_deg": 1.42,
+        "index": 2,
+        "max_abs_actual_vx_mps": 0.0465,
+        "mean_abs_actual_vx_mps": 0.0044,
+        "mean_abs_actual_wz_radps": 0.5864,
+        "mean_abs_cmd_vx_mps": 0.0025,
+        "mean_abs_cmd_wz_radps": 1.1676,
+        "mean_actual_left_mps": 0.0465,
+        "mean_actual_right_mps": -0.0427,
+        "mean_actual_wheel_abs_balance_mps": 0.0055,
+        "mean_cmd_left_mps": 0.0884,
+        "mean_cmd_right_mps": -0.0893,
+        "mean_cmd_wheel_abs_balance_mps": 0.0049,
+        "mean_turn_linear_leak_ratio": 0.148,
+        "net_translation_m": 0.0016,
+        "path_translation_m": 0.0068,
+        "start_s": 7256.001,
+        "yaw_change_deg": -98.84
+      },
+      {
+        "duration_s": 3.18,
+        "estimated_radius_m": 0.005,
+        "final_target_yaw_error_deg": 1.65,
+        "index": 3,
+        "max_abs_actual_vx_mps": 0.0206,
+        "mean_abs_actual_vx_mps": 0.0041,
+        "mean_abs_actual_wz_radps": 0.5709,
+        "mean_abs_cmd_vx_mps": 0.005,
+        "mean_abs_cmd_wz_radps": 1.1325,
+        "mean_actual_left_mps": 0.0421,
+        "mean_actual_right_mps": -0.0447,
+        "mean_actual_wheel_abs_balance_mps": 0.0081,
+        "mean_cmd_left_mps": 0.0857,
+        "mean_cmd_right_mps": -0.0867,
+        "mean_cmd_wheel_abs_balance_mps": 0.01,
+        "mean_turn_linear_leak_ratio": 0.143,
+        "net_translation_m": 0.0036,
+        "path_translation_m": 0.0088,
+        "start_s": 7263.226,
+        "yaw_change_deg": -100.3
+      },
+      {
+        "duration_s": 3.635,
+        "estimated_radius_m": 0.004,
+        "final_target_yaw_error_deg": 2.39,
+        "index": 4,
+        "max_abs_actual_vx_mps": 0.0232,
+        "mean_abs_actual_vx_mps": 0.0051,
+        "mean_abs_actual_wz_radps": 0.55,
+        "mean_abs_cmd_vx_mps": 0.0037,
+        "mean_abs_cmd_wz_radps": 1.0442,
+        "mean_actual_left_mps": 0.0395,
+        "mean_actual_right_mps": -0.0438,
+        "mean_actual_wheel_abs_balance_mps": 0.0102,
+        "mean_cmd_left_mps": 0.0781,
+        "mean_cmd_right_mps": -0.0808,
+        "mean_cmd_wheel_abs_balance_mps": 0.0073,
+        "mean_turn_linear_leak_ratio": 0.239,
+        "net_translation_m": 0.0025,
+        "path_translation_m": 0.0075,
+        "start_s": 7270.507,
+        "yaw_change_deg": -106.53
+      }
+    ],
+    "turn_linear_leak_ratio_mean": 0.172,
+    "turn_radius_max_m": 0.005,
+    "turn_translation_max_m": 0.0088,
+    "turn_translation_total_m": 0.029,
+    "turn_wheel_abs_balance_mean_mps": 0.0079,
+    "valid": true,
+    "waypoints": [
+      {
+        "final_yaw_deg": -90.0,
+        "index": 1,
+        "min_distance_m": 0.0155,
+        "x": 0.5,
+        "y": 0.0
+      },
+      {
+        "final_yaw_deg": 180.0,
+        "index": 2,
+        "min_distance_m": 0.012,
+        "x": 0.5,
+        "y": -0.5
+      },
+      {
+        "final_yaw_deg": 90.0,
+        "index": 3,
+        "min_distance_m": 0.0146,
+        "x": 0.0,
+        "y": -0.5
+      },
+      {
+        "final_yaw_deg": 0.0,
+        "index": 4,
+        "min_distance_m": 0.0,
+        "x": 0.0,
+        "y": 0.0
+      }
+    ]
+  },
+  "mission": [
+    {
+      "final_yaw": -1.5707963267948966,
+      "x": 0.5,
+      "y": 0.0,
+      "yaw": 0.0
+    },
+    {
+      "final_yaw": 3.141592653589793,
+      "x": 0.5,
+      "y": -0.5,
+      "yaw": -1.5707963267948966
+    },
+    {
+      "final_yaw": 1.5707963267948966,
+      "x": 0.0,
+      "y": -0.5,
+      "yaw": 3.141592653589793
+    },
+    {
+      "final_yaw": 0.0,
+      "x": 0.0,
+      "y": 0.0,
+      "yaw": 1.5707963267948966
+    }
+  ],
+  "nav2": {
+    "approach_velocity_scaling_dist": 0.25,
+    "desired_linear_vel": 0.28,
+    "xy_goal_tolerance": 0.02
+  },
+  "planned_path": [
+    {
+      "x": 0.0,
+      "y": 0.0
+    },
+    {
+      "x": 0.5,
+      "y": 0.0
+    },
+    {
+      "x": 0.5,
+      "y": -0.5
+    },
+    {
+      "x": 0.0,
+      "y": -0.5
+    },
+    {
+      "x": 0.0,
+      "y": 0.0
+    }
+  ],
+  "plot": "C:\\Users\\Golde\\Documents\\PlatformIO\\Projects\\EUROBOOT\\debug_runs\\mission_20260806_165126_small_square_clean03_v028.png",
+  "port": 8765,
+  "runtime_config": {
+    "geometry": {
+      "counts_per_rev": 1400.0,
+      "max_rpm": 315.0,
+      "wheel_base_m": 0.15216,
+      "wheel_diameter_m": 0.044
+    },
+    "imu": {
+      "encoder_weight": 0.2,
+      "pixhawk_baud": 115200,
+      "pixhawk_port": "/dev/serial0",
+      "pixhawk_timeout_s": 0.75,
+      "pixhawk_weight": 0.8,
+      "pixhawk_yaw_mode": "gyro",
+      "pixhawk_yaw_sign": -1.0,
+      "use_pixhawk_yaw": true
+    },
+    "nav2_params": {
+      "approach_velocity_scaling_dist": 0.25,
+      "desired_linear_vel": 0.28,
+      "lookahead_dist": 0.2,
+      "lookahead_time": 0.5,
+      "max_angular_accel": 3.3,
+      "max_lookahead_dist": 0.4,
+      "min_approach_linear_velocity": 0.05,
+      "min_lookahead_dist": 0.1,
+      "regulated_linear_scaling_min_radius": 0.36,
+      "regulated_linear_scaling_min_speed": 0.055,
+      "xy_goal_tolerance": 0.02,
+      "yaw_goal_tolerance": 5.28
+    },
+    "turn_params": {
+      "final_position_correction_enabled": 0.0,
+      "preturn_heading_error_rad": 1.2,
+      "preturn_min_distance_m": 0.08,
+      "turn_kp": 2.2,
+      "turn_linear_balance_kp": 1.0,
+      "turn_linear_balance_limit_mps": 0.06,
+      "turn_max_angular_speed": 1.55,
+      "turn_min_angular_speed": 0.25,
+      "turn_settle_s": 0.04,
+      "turn_stable_samples": 2,
+      "turn_timeout_s": 6.0,
+      "turn_yaw_tolerance_rad": 0.045
+    }
+  },
+  "status": "done",
+  "track": "small_square",
+  "turn": {
+    "final_position_correction_enabled": 0.0,
+    "turn_linear_balance_kp": 1.0,
+    "turn_linear_balance_limit_mps": 0.06
+  }
+}

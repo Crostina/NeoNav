@@ -253,7 +253,7 @@ The repeatable field-tuning mission is scripted:
 python tools\mission_tune_runner.py --host <pi-ip> --label my_test --timeout 70 --pause-after 8
 ```
 
-It sends this 4-waypoint path:
+By default it sends this larger 4-waypoint path:
 
 ```text
 1: x=0.754 y=0.733
@@ -264,7 +264,13 @@ It sends this 4-waypoint path:
 
 Each run writes a CSV and JSON into `debug_runs/`, including final error,
 cross-track error, stop samples, oscillation count, and the Nav2/IMU parameters
-used. The current best baseline is:
+used. For tighter corner work, use the 0.5 m square track:
+
+```powershell
+python tools\mission_tune_runner.py --host <pi-ip> --track small_square --label small_square_test --timeout 80 --pause-after 8
+```
+
+The current best baseline is:
 
 ```text
 runtime wheel_diameter_m=0.044
@@ -279,16 +285,22 @@ approach_velocity_scaling_dist=0.30
 regulated_linear_scaling_min_radius=0.36
 regulated_linear_scaling_min_speed=0.055
 max_angular_accel=3.30
-xy_goal_tolerance=0.03
+xy_goal_tolerance=0.02
 yaw_goal_tolerance=5.28
 preturn_heading_error_rad=1.20
+final_position_correction_enabled=0
 turn_timeout_s=6.0
 turn_yaw_tolerance_rad=0.045
 turn_stable_samples=2
 turn_min_angular_speed=0.25
 turn_max_angular_speed=1.55
 turn_kp=2.20
+turn_linear_balance_kp=1.00
+turn_linear_balance_limit_mps=0.060
 ```
+
+The best small-square validation run so far is
+`debug_runs/mission_20260806_164842_small_square_clean02_tighter_xy.*`.
 
 ## 9. Pixhawk Yaw Input
 

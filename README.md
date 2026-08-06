@@ -200,12 +200,19 @@ The phase-one stack is working on the small prototype:
 - Nav2 FollowPath can execute waypoint missions in a small test area
 - debug runs can be saved for later analysis
 
-The current field baseline was selected from a 15-run 4-waypoint tuning session.
-Best turn-track run: `debug_runs/mission_20260806_155820_turn09_v024_l020_decisive.*`.
-The tuned Nav2 profile uses `0.24 m/s` desired speed, `0.20 m` lookahead,
-`0.30 m` approach scaling distance, and Pixhawk gyro yaw fused at `0.8` with
-encoder yaw at `0.2`. The Pi bridge also uses a runtime in-place turn controller
-for waypoint heading changes.
+The current field baseline started from a 15-run 4-waypoint tuning session
+(`debug_runs/mission_20260806_155820_turn09_v024_l020_decisive.*`) and was then
+tightened with a 0.5 m square corner test
+(`debug_runs/mission_20260806_164842_small_square_clean02_tighter_xy.*`). The
+tuned Nav2 profile uses `0.24 m/s` desired speed, `0.20 m` lookahead, `0.30 m`
+approach scaling distance, `0.02 m` XY tolerance, and Pixhawk gyro yaw fused at
+`0.8` with encoder yaw at `0.2`.
+
+The Pi bridge uses an explicit stop-turn-go controller for waypoint heading
+changes. Same-waypoint position correction after a final heading turn is
+disabled by default because it caused corner recovery arcs. The turn controller
+also applies a small encoder-vx balance correction during forced spins to keep
+the actual left/right wheel speeds close to equal magnitude.
 
 The prototype is still limited by cheap motors, the L293D driver, wheel slip,
 chassis imbalance, and geometry mismatch. Future upgrades should include better
