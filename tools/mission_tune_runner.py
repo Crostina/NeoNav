@@ -22,7 +22,9 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEBUG_DIR = PROJECT_ROOT / "debug_runs"
 
-TRACKS: dict[str, list[dict[str, float | None]]] = {
+TrackPoint = dict[str, float | str | None]
+
+TRACKS: dict[str, list[TrackPoint]] = {
     "wide_box": [
         {"x": 0.754, "y": 0.733, "final_yaw_deg": None},
         {"x": 1.504, "y": 0.002, "final_yaw_deg": None},
@@ -40,6 +42,18 @@ TRACKS: dict[str, list[dict[str, float | None]]] = {
         {"x": 0.500, "y": -0.500, "final_yaw_deg": 180.0},
         {"x": 0.000, "y": -0.500, "final_yaw_deg": 90.0},
         {"x": 0.000, "y": 0.000, "final_yaw_deg": 0.0},
+    ],
+    "backward_line": [
+        {"x": -0.350, "y": 0.000, "final_yaw_deg": 0.0, "drive_mode": "backward"},
+    ],
+    "mixed_forward_backward": [
+        {"x": 0.350, "y": 0.000, "final_yaw_deg": 0.0, "drive_mode": "forward"},
+        {"x": 0.000, "y": 0.000, "final_yaw_deg": 0.0, "drive_mode": "backward"},
+    ],
+    "drawn_curve": [
+        {"x": 0.150, "y": 0.000, "final_yaw_deg": None},
+        {"x": 0.300, "y": 0.080, "final_yaw_deg": None},
+        {"x": 0.450, "y": 0.080, "final_yaw_deg": None},
     ],
 }
 
@@ -65,6 +79,20 @@ def normalize_angle(angle: float) -> float:
     while angle < -math.pi:
         angle += 2.0 * math.pi
     return angle
+
+
+def normalize_drive_mode(value: Any) -> str:
+    text = str(value or "forward").strip().lower()
+    if text in {"back", "backward", "reverse", "rev"}:
+        return "backward"
+    return "forward"
+
+
+def segment_robot_yaw(start: tuple[float, float], end: tuple[float, float], drive_mode: str) -> float:
+    yaw = math.atan2(end[1] - start[1], end[0] - start[0])
+    if normalize_drive_mode(drive_mode) == "backward":
+        yaw = normalize_angle(yaw + math.pi)
+    return yaw
 
 
 def f(row: dict[str, str], key: str, default: float = 0.0) -> float:
@@ -106,17 +134,22 @@ def parse_key_values(items: list[str]) -> dict[str, Any]:
     return values
 
 
-def mission_payload(points: list[dict[str, float | None]]) -> list[dict[str, Any]]:
+def mission_payload(points: list[TrackPoint]) -> list[dict[str, Any]]:
     payload: list[dict[str, Any]] = []
     previous = (0.0, 0.0)
     for index, point in enumerate(points):
         x = float(point["x"])
         y = float(point["y"])
         next_point = points[index + 1] if index + 1 < len(points) else point
+        drive_mode = normalize_drive_mode(point.get("drive_mode", "forward"))
         if math.hypot(x - previous[0], y - previous[1]) > 0.02:
-            yaw = math.atan2(y - previous[1], x - previous[0])
+            yaw = segment_robot_yaw(previous, (x, y), drive_mode)
         elif math.hypot(float(next_point["x"]) - x, float(next_point["y"]) - y) > 0.02:
-            yaw = math.atan2(float(next_point["y"]) - y, float(next_point["x"]) - x)
+            yaw = segment_robot_yaw(
+                (x, y),
+                (float(next_point["x"]), float(next_point["y"])),
+                normalize_drive_mode(next_point.get("drive_mode", "forward")),
+            )
         else:
             yaw = 0.0
         final_yaw_deg = point.get("final_yaw_deg")
@@ -127,6 +160,7 @@ def mission_payload(points: list[dict[str, float | None]]) -> list[dict[str, Any
                 "y": y,
                 "yaw": normalize_angle(yaw),
                 "final_yaw": None if final_yaw is None else normalize_angle(final_yaw),
+                "drive_mode": drive_mode,
             }
         )
         previous = (x, y)
@@ -202,9 +236,18 @@ def project_to_segment(x: float, y: float, path: list[tuple[float, float]], segm
     )
 
 
-def row_projection(row: dict[str, str], path: list[tuple[float, float]]) -> Projection:
+def row_projection(row: dict[str, str], path: list[tuple[float, float]], mission_mode: str = "waypoints") -> Projection:
+    if mission_mode == "path":
+        return project_to_path(f(row, "x_m"), f(row, "y_m"), path)
     segment = int(f(row, "mission_index", 0.0))
     return project_to_segment(f(row, "x_m"), f(row, "y_m"), path, segment)
+
+
+def projection_robot_yaw(projection: Projection, payload: list[dict[str, Any]], mission_mode: str = "waypoints") -> float:
+    if mission_mode == "waypoints" and 1 <= projection.segment <= len(payload):
+        if normalize_drive_mode(payload[projection.segment - 1].get("drive_mode")) == "backward":
+            return normalize_angle(projection.yaw_rad + math.pi)
+    return projection.yaw_rad
 
 
 class Bridge:
@@ -316,7 +359,7 @@ def build_turn_episodes(odom: list[dict[str, str]]) -> list[dict[str, Any]]:
     return metrics
 
 
-def score_rows(rows: list[dict[str, str]], status: str, payload: list[dict[str, Any]]) -> dict[str, Any]:
+def score_rows(rows: list[dict[str, str]], status: str, payload: list[dict[str, Any]], mission_mode: str = "waypoints") -> dict[str, Any]:
     odom = [row for row in rows if row.get("event_type") == "odom"]
     if not odom:
         return {"score": 9999.0, "valid": False, "reason": "no odom rows"}
@@ -331,11 +374,11 @@ def score_rows(rows: list[dict[str, str]], status: str, payload: list[dict[str, 
         mission_odom = odom
 
     path = planned_path(payload)
-    projections = [row_projection(row, path) for row in mission_odom]
+    projections = [row_projection(row, path, mission_mode) for row in mission_odom]
     ctes = [projection.distance_m for projection in projections]
     signed_ctes = [projection.signed_error_m for projection in projections]
     heading_errors = [
-        abs(normalize_angle(projection.yaw_rad - f(row, "yaw_rad")))
+        abs(normalize_angle(projection_robot_yaw(projection, payload, mission_mode) - f(row, "yaw_rad")))
         for row, projection in zip(mission_odom, projections)
         if row.get("mission_state") == "navigating"
     ]
@@ -478,13 +521,21 @@ def score_rows(rows: list[dict[str, str]], status: str, payload: list[dict[str, 
     }
 
 
-def make_plot(csv_path: Path, payload: list[dict[str, Any]], metrics: dict[str, Any]) -> str | None:
+def make_plot(csv_path: Path, payload: list[dict[str, Any]], metrics: dict[str, Any], mission_mode: str = "waypoints") -> str | None:
     try:
         import matplotlib.pyplot as plt
     except ImportError:
         return None
 
-    rows = [row for row in csv.DictReader(csv_path.open(newline="", encoding="utf-8")) if row.get("event_type") == "odom"]
+    all_rows = list(csv.DictReader(csv_path.open(newline="", encoding="utf-8")))
+    start_index = 0
+    for idx, row in enumerate(all_rows):
+        if row.get("event_type") == "mission_status" and row.get("mission_state") in {"turning", "navigating"}:
+            start_index = idx
+            break
+    rows = [row for row in all_rows[start_index:] if row.get("event_type") == "odom"]
+    if len(rows) < 5:
+        rows = [row for row in all_rows if row.get("event_type") == "odom"]
     if not rows:
         return None
 
@@ -494,7 +545,7 @@ def make_plot(csv_path: Path, payload: list[dict[str, Any]], metrics: dict[str, 
     ys = [f(row, "y_m") for row in rows]
     yaws = [math.degrees(f(row, "yaw_rad")) for row in rows]
     path = planned_path(payload)
-    projections = [row_projection(row, path) for row in rows]
+    projections = [row_projection(row, path, mission_mode) for row in rows]
     ctes = [projection.signed_error_m for projection in projections]
     actual_vx = [f(row, "linear_x_mps") for row in rows]
     actual_wz = [f(row, "angular_z_radps") for row in rows]
@@ -581,6 +632,7 @@ def main() -> int:
     parser.add_argument("--host", default="192.168.137.85")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--track", choices=sorted(TRACKS), default="turn_box")
+    parser.add_argument("--mode", choices=["waypoints", "path"], default="waypoints")
     parser.add_argument("--label", required=True)
     parser.add_argument("--timeout", type=float, default=70.0)
     parser.add_argument("--settle", type=float, default=1.0)
@@ -606,6 +658,7 @@ def main() -> int:
     metadata: dict[str, Any] = {
         "label": args.label,
         "track": args.track,
+        "mission_mode": args.mode,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "host": args.host,
         "port": args.port,
@@ -713,7 +766,9 @@ def main() -> int:
                 if abs(angular_z) > 0.12:
                     turn_balance = abs(abs(actual_left) - abs(actual_right))
                     turn_leak = abs(linear_x) / max(0.001, turn_tangent)
-                if 1 <= current_index < len(path):
+                if args.mode == "path":
+                    projection = project_to_path(x, y, path)
+                elif 1 <= current_index < len(path):
                     projection = project_to_segment(x, y, path, current_index)
                 else:
                     projection = project_to_path(x, y, path)
@@ -768,7 +823,7 @@ def main() -> int:
                         "nearest_path_yaw_rad": projection.yaw_rad,
                         "cross_track_error_m": projection.distance_m,
                         "signed_cross_track_error_m": projection.signed_error_m,
-                        "heading_error_rad": normalize_angle(projection.yaw_rad - yaw),
+                        "heading_error_rad": normalize_angle(projection_robot_yaw(projection, payload, args.mode) - yaw),
                         "distance_to_waypoint_m": waypoint_distance,
                         "turn_kind": turn_kind,
                         "turn_target_yaw_rad": "" if turn_target_yaw is None else turn_target_yaw,
@@ -835,7 +890,7 @@ def main() -> int:
         bridge.send({"type": "reset_odom"})
         for msg in bridge.recv_available(1.0):
             handle(msg)
-        bridge.send({"type": "mission", "waypoints": payload})
+        bridge.send({"type": "mission", "mode": args.mode, "waypoints": payload})
 
         deadline = time.monotonic() + args.timeout
         while time.monotonic() < deadline:
@@ -853,8 +908,8 @@ def main() -> int:
             handle(msg)
 
     bridge.close()
-    metrics = score_rows(rows, status, payload)
-    plot_path = None if args.no_plot else make_plot(csv_path, payload, metrics)
+    metrics = score_rows(rows, status, payload, args.mode)
+    plot_path = None if args.no_plot else make_plot(csv_path, payload, metrics, args.mode)
     metadata.update(
         {
             "finished_at": datetime.now().isoformat(timespec="seconds"),

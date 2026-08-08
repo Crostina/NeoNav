@@ -128,6 +128,24 @@ class Waypoint:
     x_m: float
     y_m: float
     final_yaw_deg: float | None = None
+    drive_mode: str = "forward"
+
+
+DRIVE_MODES = ("forward", "backward")
+
+
+def normalize_drive_mode(value: Any) -> str:
+    text = str(value or "forward").strip().lower()
+    if text in {"back", "backward", "reverse", "rev"}:
+        return "backward"
+    return "forward"
+
+
+def segment_robot_yaw(start: tuple[float, float], end: tuple[float, float], drive_mode: str) -> float:
+    travel_yaw = math.atan2(end[1] - start[1], end[0] - start[0])
+    if normalize_drive_mode(drive_mode) == "backward":
+        return normalize_angle(travel_yaw + math.pi)
+    return travel_yaw
 
 
 class BridgeClient:
@@ -228,11 +246,14 @@ class EurobootDashboard:
         self.pose = RobotPose()
         self.trail: list[tuple[float, float]] = [(0.0, 0.0)]
         self.waypoints: list[Waypoint] = []
+        self.drawn_track: list[tuple[float, float]] = []
         self.selected_waypoint_index: int | None = None
+        self.drawing_track = False
         self.bridge_queue: queue.Queue[dict] = queue.Queue()
         self.bridge = BridgeClient(self.bridge_queue)
 
         self.add_waypoint_mode = tk.BooleanVar(value=True)
+        self.draw_track_mode_var = tk.BooleanVar(value=False)
         self.save_debug_var = tk.BooleanVar(value=bool(self.settings.get("save_debug", False)))
         self.auto_corner_heading_var = tk.BooleanVar(value=bool(self.settings.get("auto_corner_heading", True)))
         self.use_pixhawk_yaw_var = tk.BooleanVar(value=bool(self.imu_settings.get("use_pixhawk_yaw", True)))
@@ -280,6 +301,7 @@ class EurobootDashboard:
             "waypoint_x": tk.StringVar(value=""),
             "waypoint_y": tk.StringVar(value=""),
             "waypoint_theta": tk.StringVar(value=""),
+            "waypoint_drive_mode": tk.StringVar(value="forward"),
         }
 
         self._build_layout()
@@ -432,12 +454,18 @@ class EurobootDashboard:
         ttk.Label(side, textvariable=self.speed_text, style="Small.TLabel").grid(row=46, column=0, sticky="w", pady=(2, 14))
 
         self._section(side, 47, "Waypoints")
-        ttk.Checkbutton(side, text="Click map to add waypoint", variable=self.add_waypoint_mode).grid(row=48, column=0, sticky="w", pady=(2, 8))
+        waypoint_modes = ttk.Frame(side)
+        waypoint_modes.grid(row=48, column=0, sticky="ew", pady=(2, 8))
+        waypoint_modes.columnconfigure((0, 1), weight=1)
+        ttk.Checkbutton(waypoint_modes, text="Add Points", variable=self.add_waypoint_mode).grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(waypoint_modes, text="Draw Track", variable=self.draw_track_mode_var).grid(row=0, column=1, sticky="w")
         waypoint_buttons = ttk.Frame(side)
         waypoint_buttons.grid(row=49, column=0, sticky="ew")
-        waypoint_buttons.columnconfigure((0, 1), weight=1)
+        waypoint_buttons.columnconfigure((0, 1, 2, 3), weight=1)
         ttk.Button(waypoint_buttons, text="Clear", command=self.clear_waypoints).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ttk.Button(waypoint_buttons, text="1m Demo", command=self.load_demo_path).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        ttk.Button(waypoint_buttons, text="1m Demo", command=self.load_demo_path).grid(row=0, column=1, sticky="ew", padx=4)
+        ttk.Button(waypoint_buttons, text="Run Track", command=self.run_drawn_track).grid(row=0, column=2, sticky="ew", padx=4)
+        ttk.Button(waypoint_buttons, text="Clear Track", command=self.clear_drawn_track).grid(row=0, column=3, sticky="ew", padx=(4, 0))
         self.waypoint_list = tk.Listbox(side, height=6, activestyle="dotbox")
         self.waypoint_list.grid(row=50, column=0, sticky="ew", pady=(10, 14))
         self.waypoint_list.bind("<<ListboxSelect>>", self.on_waypoint_select)
@@ -446,15 +474,16 @@ class EurobootDashboard:
         self._waypoint_field(side, 52, "x (m)", "waypoint_x")
         self._waypoint_field(side, 53, "y (m)", "waypoint_y")
         self._waypoint_field(side, 54, "Final theta deg", "waypoint_theta")
+        self._waypoint_mode_field(side, 55, "Travel mode", "waypoint_drive_mode")
         selected_buttons = ttk.Frame(side)
-        selected_buttons.grid(row=55, column=0, sticky="ew", pady=(8, 14))
+        selected_buttons.grid(row=56, column=0, sticky="ew", pady=(8, 14))
         selected_buttons.columnconfigure((0, 1), weight=1)
         ttk.Button(selected_buttons, text="Update Selected", command=self.update_selected_waypoint).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ttk.Button(selected_buttons, text="Delete Selected", command=self.delete_selected_waypoint).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
-        self._section(side, 56, "Heading")
+        self._section(side, 57, "Heading")
         self.heading_canvas = tk.Canvas(side, width=188, height=188, background="#f6f7f9", highlightthickness=0)
-        self.heading_canvas.grid(row=57, column=0, pady=(4, 0))
+        self.heading_canvas.grid(row=58, column=0, pady=(4, 0))
 
     def _section(self, parent: ttk.Frame, row: int, title: str) -> None:
         ttk.Label(parent, text=title, font=("Segoe UI", 11, "bold")).grid(row=row, column=0, sticky="w", pady=(0, 6))
@@ -478,6 +507,15 @@ class EurobootDashboard:
         entry.bind("<Return>", lambda _event: self.update_selected_waypoint())
         entry.bind("<FocusOut>", lambda _event: self.update_selected_waypoint())
 
+    def _waypoint_mode_field(self, parent: ttk.Frame, row: int, label: str, key: str) -> None:
+        frame = ttk.Frame(parent)
+        frame.grid(row=row, column=0, sticky="ew", pady=2)
+        frame.columnconfigure(1, weight=1)
+        ttk.Label(frame, text=label, style="Small.TLabel").grid(row=0, column=0, sticky="w")
+        combo = ttk.Combobox(frame, textvariable=self.vars[key], values=DRIVE_MODES, width=11, state="readonly")
+        combo.grid(row=0, column=1, sticky="e")
+        combo.bind("<<ComboboxSelected>>", lambda _event: self.update_selected_waypoint())
+
     def on_mousewheel(self, event: tk.Event) -> None:
         if hasattr(self, "side_canvas"):
             self.side_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
@@ -486,6 +524,7 @@ class EurobootDashboard:
         self.canvas.bind("<Configure>", lambda _event: self.redraw())
         self.canvas.bind("<Button-1>", self.on_canvas_click)
         self.canvas.bind("<B1-Motion>", self.on_canvas_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
 
     def connect_bridge(self) -> None:
         try:
@@ -568,16 +607,25 @@ class EurobootDashboard:
         previous = (self.pose.x_m, self.pose.y_m)
         for index, point in enumerate(self.waypoints):
             next_point = self.waypoints[index + 1] if index + 1 < len(self.waypoints) else point
+            drive_mode = normalize_drive_mode(point.drive_mode)
             if math.hypot(point.x_m - previous[0], point.y_m - previous[1]) > 0.02:
-                yaw = math.atan2(point.y_m - previous[1], point.x_m - previous[0])
+                yaw = segment_robot_yaw(previous, (point.x_m, point.y_m), drive_mode)
             elif math.hypot(next_point.x_m - point.x_m, next_point.y_m - point.y_m) > 0.02:
-                yaw = math.atan2(next_point.y_m - point.y_m, next_point.x_m - point.x_m)
+                yaw = segment_robot_yaw(
+                    (point.x_m, point.y_m),
+                    (next_point.x_m, next_point.y_m),
+                    next_point.drive_mode,
+                )
             else:
                 yaw = self.pose.yaw_rad
             if point.final_yaw_deg is not None:
                 final_yaw = math.radians(point.final_yaw_deg)
             elif self.auto_corner_heading_var.get() and index + 1 < len(self.waypoints):
-                final_yaw = math.atan2(next_point.y_m - point.y_m, next_point.x_m - point.x_m)
+                final_yaw = segment_robot_yaw(
+                    (point.x_m, point.y_m),
+                    (next_point.x_m, next_point.y_m),
+                    next_point.drive_mode,
+                )
             else:
                 final_yaw = None
             payload.append(
@@ -586,12 +634,54 @@ class EurobootDashboard:
                     "y": point.y_m,
                     "yaw": normalize_angle(yaw),
                     "final_yaw": None if final_yaw is None else normalize_angle(final_yaw),
+                    "drive_mode": drive_mode,
                 }
             )
             previous = (point.x_m, point.y_m)
-        self.start_debug_record(payload)
-        self.bridge.send({"type": "mission", "waypoints": payload})
+        self.start_debug_record(payload, mission_mode="waypoints")
+        self.bridge.send({"type": "mission", "mode": "waypoints", "waypoints": payload})
         self.mission_text.set(f"Sent {len(payload)} waypoint mission.")
+
+    def run_drawn_track(self) -> None:
+        if len(self.drawn_track) < 2:
+            self.status_text.set("Draw a track with at least two points first.")
+            return
+        if not self.bridge.connected:
+            self.status_text.set("Connect to the Pi bridge first.")
+            return
+
+        compact: list[tuple[float, float]] = []
+        for point in self.drawn_track:
+            if not compact or math.hypot(point[0] - compact[-1][0], point[1] - compact[-1][1]) >= 0.03:
+                compact.append(point)
+        if len(compact) < 2:
+            self.status_text.set("Drawn track is too short.")
+            return
+
+        payload = []
+        previous = (self.pose.x_m, self.pose.y_m)
+        for index, (x_m, y_m) in enumerate(compact):
+            next_point = compact[index + 1] if index + 1 < len(compact) else (x_m, y_m)
+            if math.hypot(x_m - previous[0], y_m - previous[1]) > 0.02:
+                yaw = math.atan2(y_m - previous[1], x_m - previous[0])
+            elif math.hypot(next_point[0] - x_m, next_point[1] - y_m) > 0.02:
+                yaw = math.atan2(next_point[1] - y_m, next_point[0] - x_m)
+            else:
+                yaw = self.pose.yaw_rad
+            payload.append(
+                {
+                    "x": x_m,
+                    "y": y_m,
+                    "yaw": normalize_angle(yaw),
+                    "final_yaw": None,
+                    "drive_mode": "forward",
+                }
+            )
+            previous = (x_m, y_m)
+
+        self.start_debug_record(payload, mission_mode="path")
+        self.bridge.send({"type": "mission", "mode": "path", "waypoints": payload})
+        self.mission_text.set(f"Sent drawn track with {len(payload)} path points.")
 
     def stop_robot(self) -> None:
         if self.bridge.connected:
@@ -799,7 +889,7 @@ class EurobootDashboard:
         )
         DASHBOARD_SETTINGS_PATH.write_text(json.dumps(self.settings, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    def start_debug_record(self, waypoints: list[dict]) -> None:
+    def start_debug_record(self, waypoints: list[dict], mission_mode: str = "waypoints") -> None:
         self.finish_debug_record("replaced")
         if not self.save_debug_var.get():
             return
@@ -819,7 +909,9 @@ class EurobootDashboard:
             "geometry": self.geometry_payload(),
             "imu": self.imu_settings,
             "nav2_params": self.nav2_params,
+            "mission_mode": mission_mode,
             "waypoints": waypoints,
+            "drawn_track": [{"x": x, "y": y} for x, y in self.drawn_track] if mission_mode == "path" else [],
             "auto_corner_heading": bool(self.auto_corner_heading_var.get()),
             "bridge_host": self.vars["bridge_host"].get().strip(),
             "bridge_port": self.vars["bridge_port"].get().strip(),
@@ -980,21 +1072,32 @@ class EurobootDashboard:
         self.vars["waypoint_x"].set("")
         self.vars["waypoint_y"].set("")
         self.vars["waypoint_theta"].set("")
+        self.vars["waypoint_drive_mode"].set("forward")
         self.refresh_waypoints()
         self.status_text.set("Waypoints cleared.")
         self.redraw()
 
     def load_demo_path(self) -> None:
-        self.waypoints = [Waypoint(1.0, 0.0)]
+        self.waypoints = [Waypoint(1.0, 0.0, drive_mode="forward")]
         self.select_waypoint(0)
         self.refresh_waypoints()
         self.status_text.set("Loaded 1 meter forward demo waypoint.")
         self.redraw()
 
+    def clear_drawn_track(self) -> None:
+        self.drawn_track.clear()
+        self.drawing_track = False
+        self.status_text.set("Drawn track cleared.")
+        self.redraw()
+
     def on_canvas_click(self, event: tk.Event) -> None:
         world = self.screen_to_world(event.x, event.y)
-        if self.add_waypoint_mode.get():
-            self.waypoints.append(Waypoint(world[0], world[1]))
+        if self.draw_track_mode_var.get():
+            self.drawn_track = [world]
+            self.drawing_track = True
+            self.status_text.set(f"Drawing track from x={world[0]:.3f}, y={world[1]:.3f}.")
+        elif self.add_waypoint_mode.get():
+            self.waypoints.append(Waypoint(world[0], world[1], drive_mode=self.vars["waypoint_drive_mode"].get()))
             self.selected_waypoint_index = len(self.waypoints) - 1
             self.refresh_waypoints()
             self.select_waypoint(self.selected_waypoint_index)
@@ -1008,6 +1111,12 @@ class EurobootDashboard:
         self.redraw()
 
     def on_canvas_drag(self, event: tk.Event) -> None:
+        if self.draw_track_mode_var.get() and self.drawing_track:
+            point = self.screen_to_world(event.x, event.y)
+            if not self.drawn_track or math.hypot(point[0] - self.drawn_track[-1][0], point[1] - self.drawn_track[-1][1]) >= 0.02:
+                self.drawn_track.append(point)
+                self.redraw()
+            return
         if self.add_waypoint_mode.get() or self.bridge.connected:
             return
         x_m, y_m = self.screen_to_world(event.x, event.y)
@@ -1017,11 +1126,22 @@ class EurobootDashboard:
         self.vars["pose_y"].set(f"{y_m:.3f}")
         self.redraw()
 
+    def on_canvas_release(self, event: tk.Event) -> None:
+        if not self.draw_track_mode_var.get() or not self.drawing_track:
+            return
+        point = self.screen_to_world(event.x, event.y)
+        if not self.drawn_track or math.hypot(point[0] - self.drawn_track[-1][0], point[1] - self.drawn_track[-1][1]) >= 0.01:
+            self.drawn_track.append(point)
+        self.drawing_track = False
+        self.status_text.set(f"Drawn track ready: {len(self.drawn_track)} points.")
+        self.redraw()
+
     def refresh_waypoints(self) -> None:
         self.waypoint_list.delete(0, tk.END)
         for index, waypoint in enumerate(self.waypoints, start=1):
             theta = "" if waypoint.final_yaw_deg is None else f"  theta={waypoint.final_yaw_deg:.1f} deg"
-            self.waypoint_list.insert(tk.END, f"{index:02d}  x={waypoint.x_m:.3f} m   y={waypoint.y_m:.3f} m{theta}")
+            mode = normalize_drive_mode(waypoint.drive_mode)
+            self.waypoint_list.insert(tk.END, f"{index:02d}  {mode[:3]}  x={waypoint.x_m:.3f} m   y={waypoint.y_m:.3f} m{theta}")
         if self.selected_waypoint_index is not None and self.selected_waypoint_index < len(self.waypoints):
             self.waypoint_list.selection_clear(0, tk.END)
             self.waypoint_list.selection_set(self.selected_waypoint_index)
@@ -1041,6 +1161,7 @@ class EurobootDashboard:
         self.vars["waypoint_x"].set(f"{waypoint.x_m:.3f}")
         self.vars["waypoint_y"].set(f"{waypoint.y_m:.3f}")
         self.vars["waypoint_theta"].set("" if waypoint.final_yaw_deg is None else f"{waypoint.final_yaw_deg:.1f}")
+        self.vars["waypoint_drive_mode"].set(normalize_drive_mode(waypoint.drive_mode))
         self.refresh_waypoints()
         self.redraw()
 
@@ -1055,7 +1176,9 @@ class EurobootDashboard:
         except ValueError:
             self.status_text.set("Selected waypoint contains an invalid number.")
             return
-        self.waypoints[self.selected_waypoint_index] = Waypoint(x_m, y_m, final_yaw_deg)
+        drive_mode = normalize_drive_mode(self.vars["waypoint_drive_mode"].get())
+        self.vars["waypoint_drive_mode"].set(drive_mode)
+        self.waypoints[self.selected_waypoint_index] = Waypoint(x_m, y_m, final_yaw_deg, drive_mode)
         self.refresh_waypoints()
         self.status_text.set(f"Updated waypoint {self.selected_waypoint_index + 1}.")
         self.redraw()
@@ -1070,12 +1193,14 @@ class EurobootDashboard:
             self.vars["waypoint_x"].set("")
             self.vars["waypoint_y"].set("")
             self.vars["waypoint_theta"].set("")
+            self.vars["waypoint_drive_mode"].set("forward")
         else:
             self.selected_waypoint_index = min(deleted, len(self.waypoints) - 1)
             waypoint = self.waypoints[self.selected_waypoint_index]
             self.vars["waypoint_x"].set(f"{waypoint.x_m:.3f}")
             self.vars["waypoint_y"].set(f"{waypoint.y_m:.3f}")
             self.vars["waypoint_theta"].set("" if waypoint.final_yaw_deg is None else f"{waypoint.final_yaw_deg:.1f}")
+            self.vars["waypoint_drive_mode"].set(normalize_drive_mode(waypoint.drive_mode))
         self.refresh_waypoints()
         self.status_text.set("Deleted selected waypoint.")
         self.redraw()
@@ -1096,6 +1221,7 @@ class EurobootDashboard:
     def redraw(self) -> None:
         self.canvas.delete("all")
         self._draw_grid()
+        self._draw_drawn_track()
         self._draw_waypoints()
         self._draw_trail()
         self._draw_robot()
@@ -1135,23 +1261,49 @@ class EurobootDashboard:
             points.extend([sx, sy])
         self.canvas.create_line(*points, fill="#1677ff", width=2, smooth=True)
 
+    def _draw_drawn_track(self) -> None:
+        if len(self.drawn_track) < 2:
+            return
+        flat: list[float] = []
+        for x_m, y_m in self.drawn_track:
+            sx, sy = self.world_to_screen(x_m, y_m)
+            flat.extend([sx, sy])
+        self.canvas.create_line(*flat, fill="#7c3aed", width=3, smooth=True)
+        for sx, sy in (self.world_to_screen(*self.drawn_track[0]), self.world_to_screen(*self.drawn_track[-1])):
+            self.canvas.create_oval(sx - 5, sy - 5, sx + 5, sy + 5, fill="#7c3aed", outline="#4c1d95", width=1)
+
     def _draw_waypoints(self) -> None:
         if not self.waypoints:
             return
         screen_points = [self.world_to_screen(waypoint.x_m, waypoint.y_m) for waypoint in self.waypoints]
-        start = self.world_to_screen(self.pose.x_m, self.pose.y_m)
-        self.canvas.create_line(start[0], start[1], screen_points[0][0], screen_points[0][1], fill="#16a34a", width=2, dash=(6, 4))
-        if len(screen_points) > 1:
-            flat = [coord for point in screen_points for coord in point]
-            self.canvas.create_line(*flat, fill="#16a34a", width=2, dash=(6, 4))
+        segment_start = self.world_to_screen(self.pose.x_m, self.pose.y_m)
+        for waypoint, segment_end in zip(self.waypoints, screen_points):
+            reverse = normalize_drive_mode(waypoint.drive_mode) == "backward"
+            color = "#9333ea" if reverse else "#16a34a"
+            dash = (3, 3) if reverse else (6, 4)
+            self.canvas.create_line(
+                segment_start[0],
+                segment_start[1],
+                segment_end[0],
+                segment_end[1],
+                fill=color,
+                width=2,
+                dash=dash,
+                arrow=tk.LAST,
+            )
+            segment_start = segment_end
         for index, (sx, sy) in enumerate(screen_points, start=1):
             selected = self.selected_waypoint_index == index - 1
             radius = 9 if selected else 7
             fill = "#f59e0b" if selected else "#16a34a"
             outline = "#b45309" if selected else "#0f7a34"
-            self.canvas.create_oval(sx - radius, sy - radius, sx + radius, sy + radius, fill=fill, outline=outline, width=2)
-            self.canvas.create_text(sx + 12, sy - 12, text=str(index), fill="#0f7a34", font=("Segoe UI", 10, "bold"))
             waypoint = self.waypoints[index - 1]
+            if normalize_drive_mode(waypoint.drive_mode) == "backward" and not selected:
+                fill = "#9333ea"
+                outline = "#5b21b6"
+            self.canvas.create_oval(sx - radius, sy - radius, sx + radius, sy + radius, fill=fill, outline=outline, width=2)
+            label_color = "#5b21b6" if normalize_drive_mode(waypoint.drive_mode) == "backward" else "#0f7a34"
+            self.canvas.create_text(sx + 12, sy - 12, text=str(index), fill=label_color, font=("Segoe UI", 10, "bold"))
             if waypoint.final_yaw_deg is not None:
                 yaw = math.radians(waypoint.final_yaw_deg)
                 tip = (sx + math.cos(yaw) * 28, sy - math.sin(yaw) * 28)

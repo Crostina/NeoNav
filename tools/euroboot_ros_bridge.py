@@ -111,6 +111,9 @@ NAV2_PARAM_TARGETS = {
 
 WAYPOINT_GUARD_TOLERANCE_M = 0.08
 FINAL_POSITION_GUARD_TOLERANCE_M = 0.055
+DIRECT_BACKWARD_MAX_SPEED_MPS = 0.16
+DIRECT_BACKWARD_HEADING_KP = 1.45
+DIRECT_BACKWARD_MAX_ANGULAR_RADPS = 0.65
 
 
 def normalize_angle(angle: float) -> float:
@@ -148,6 +151,14 @@ class MissionWaypoint:
     y: float
     path_yaw: float
     final_yaw: float | None = None
+    drive_mode: str = "forward"
+
+
+def normalize_drive_mode(value: Any) -> str:
+    text = str(value or "forward").strip().lower()
+    if text in {"back", "backward", "reverse", "rev"}:
+        return "backward"
+    return "forward"
 
 
 class PixhawkYawReader:
@@ -539,7 +550,7 @@ class DashboardBridge(Node):
             return
         if kind == "mission":
             waypoints = command.get("waypoints", [])
-            self.start_mission(waypoints)
+            self.start_mission(waypoints, str(command.get("mode", "waypoints")))
             return
         self.send(client, {"type": "status", "level": "error", "message": f"unknown command: {kind}"})
 
@@ -840,7 +851,7 @@ class DashboardBridge(Node):
         pixhawk_yaw, _age, pixhawk_gyro_yaw = self.pixhawk_reader.get()
         self.pixhawk_origin_yaw = self.selected_pixhawk_yaw(pixhawk_yaw, pixhawk_gyro_yaw)
 
-    def start_mission(self, waypoints: list[Any]) -> None:
+    def start_mission(self, waypoints: list[Any], mission_mode: str = "waypoints") -> None:
         if not waypoints:
             self.broadcast({"type": "mission_status", "state": "idle", "message": "no waypoints to execute"})
             return
@@ -848,6 +859,7 @@ class DashboardBridge(Node):
             self.broadcast({"type": "mission_status", "state": "busy", "message": "mission already running"})
             return
 
+        mode = mission_mode.strip().lower()
         parsed: list[MissionWaypoint] = []
         for item in waypoints:
             try:
@@ -859,6 +871,7 @@ class DashboardBridge(Node):
                         y=float(item["y"]),
                         path_yaw=float(item.get("yaw", 0.0)),
                         final_yaw=final_yaw,
+                        drive_mode=normalize_drive_mode(item.get("drive_mode", "forward")),
                     )
                 )
             except (KeyError, TypeError, ValueError):
@@ -866,7 +879,10 @@ class DashboardBridge(Node):
                 return
 
         self.cancel_requested = False
-        self.mission_thread = threading.Thread(target=self.run_mission, args=(parsed,), daemon=True)
+        if mode in {"path", "continuous", "track"}:
+            self.mission_thread = threading.Thread(target=self.run_path_mission, args=(parsed,), daemon=True)
+        else:
+            self.mission_thread = threading.Thread(target=self.run_mission, args=(parsed,), daemon=True)
         self.mission_thread.start()
 
     def run_mission(self, waypoints: list[MissionWaypoint]) -> None:
@@ -884,8 +900,9 @@ class DashboardBridge(Node):
                 raw_start = self.raw_pose or Pose2D(0.0, 0.0, 0.0)
                 raw_wp = self.local_to_raw_locked(Pose2D(local_wp.x, local_wp.y, local_wp.path_yaw))
 
-            path_yaw = math.atan2(raw_wp.y - raw_start.y, raw_wp.x - raw_start.x)
-            heading_error = normalize_angle(path_yaw - raw_start.yaw)
+            travel_yaw = math.atan2(raw_wp.y - raw_start.y, raw_wp.x - raw_start.x)
+            robot_yaw = raw_wp.yaw if local_wp.drive_mode == "backward" else travel_yaw
+            heading_error = normalize_angle(robot_yaw - raw_start.yaw)
             segment_distance = math.hypot(raw_wp.x - raw_start.x, raw_wp.y - raw_start.y)
             preturn_min_distance = float(self.turn_params["preturn_min_distance_m"])
             preturn_heading_error = float(self.turn_params["preturn_heading_error_rad"])
@@ -899,8 +916,8 @@ class DashboardBridge(Node):
                         "message": f"aligning for waypoint {index}/{len(waypoints)}",
                     }
                 )
-                self.get_logger().info(f"turn before waypoint {index}: target_yaw={path_yaw:.3f}")
-                if not self.rotate_to_heading(path_yaw):
+                self.get_logger().info(f"turn before waypoint {index}: target_yaw={robot_yaw:.3f}")
+                if not self.rotate_to_heading(robot_yaw):
                     self.publish_stop()
                     self.get_logger().warn(f"turn before waypoint {index} did not settle; continuing with Nav2")
                     self.broadcast(
@@ -917,25 +934,38 @@ class DashboardBridge(Node):
                     raw_start = self.raw_pose or raw_start
                     raw_wp = self.local_to_raw_locked(Pose2D(local_wp.x, local_wp.y, local_wp.path_yaw))
 
-            goal = FollowPath.Goal()
-            goal.path = self.make_straight_path(raw_start, raw_wp)
-            goal.controller_id = "FollowPath"
-            goal.goal_checker_id = "goal_checker"
-            goal.progress_checker_id = "progress_checker"
+            if local_wp.drive_mode == "backward":
+                self.broadcast(
+                    {
+                        "type": "mission_status",
+                        "state": "navigating",
+                        "index": index,
+                        "total": len(waypoints),
+                        "message": f"backing to waypoint {index}/{len(waypoints)}",
+                    }
+                )
+                if not self.drive_segment_direct(raw_wp, index, len(waypoints), direction=-1):
+                    return
+            else:
+                goal = FollowPath.Goal()
+                goal.path = self.make_straight_path(raw_start, raw_wp)
+                goal.controller_id = "FollowPath"
+                goal.goal_checker_id = "goal_checker"
+                goal.progress_checker_id = "progress_checker"
 
-            self.broadcast(
-                {
-                    "type": "mission_status",
-                    "state": "navigating",
-                    "index": index,
-                    "total": len(waypoints),
-                    "message": f"going to waypoint {index}/{len(waypoints)}",
-                }
-            )
-            self.get_logger().info(f"follow path for waypoint {index}: poses={len(goal.path.poses)}")
+                self.broadcast(
+                    {
+                        "type": "mission_status",
+                        "state": "navigating",
+                        "index": index,
+                        "total": len(waypoints),
+                        "message": f"going to waypoint {index}/{len(waypoints)}",
+                    }
+                )
+                self.get_logger().info(f"follow path for waypoint {index}: poses={len(goal.path.poses)}")
 
-            if not self.follow_waypoint(goal, raw_wp, index, len(waypoints)):
-                return
+                if not self.follow_waypoint(goal, raw_wp, index, len(waypoints)):
+                    return
 
             if local_wp.final_yaw is not None:
                 with self.lock:
@@ -1016,6 +1046,128 @@ class DashboardBridge(Node):
         self.publish_stop()
         self.get_logger().info("mission complete")
         self.broadcast({"type": "mission_status", "state": "done", "message": "mission complete"})
+
+    def run_path_mission(self, waypoints: list[MissionWaypoint]) -> None:
+        self.get_logger().info(f"continuous path mission start: {len(waypoints)} point(s)")
+        if not self.nav_client.wait_for_server(timeout_sec=10.0):
+            self.get_logger().error("path mission failed: follow_path server unavailable")
+            self.broadcast({"type": "mission_status", "state": "error", "message": "Nav2 follow_path server unavailable"})
+            return
+
+        with self.lock:
+            raw_start = self.raw_pose or Pose2D(0.0, 0.0, 0.0)
+            raw_points = [
+                self.local_to_raw_locked(Pose2D(local_wp.x, local_wp.y, local_wp.path_yaw))
+                for local_wp in waypoints
+            ]
+
+        path_points = [raw_start]
+        for point in raw_points:
+            if math.hypot(point.x - path_points[-1].x, point.y - path_points[-1].y) >= 0.025:
+                path_points.append(point)
+        if len(path_points) < 2:
+            self.broadcast({"type": "mission_status", "state": "idle", "message": "drawn path is too short"})
+            return
+
+        first_yaw = math.atan2(path_points[1].y - path_points[0].y, path_points[1].x - path_points[0].x)
+        if abs(normalize_angle(first_yaw - raw_start.yaw)) > float(self.turn_params["preturn_heading_error_rad"]):
+            self.broadcast({"type": "mission_status", "state": "turning", "index": 1, "total": 1, "message": "aligning for drawn path"})
+            if not self.rotate_to_heading(first_yaw):
+                self.get_logger().warn("drawn path initial heading did not fully settle; continuing")
+            with self.lock:
+                raw_start = self.raw_pose or raw_start
+            path_points[0] = raw_start
+
+        goal = FollowPath.Goal()
+        goal.path = self.make_polyline_path(path_points)
+        goal.controller_id = "FollowPath"
+        goal.goal_checker_id = "goal_checker"
+        goal.progress_checker_id = "progress_checker"
+        target = path_points[-1]
+
+        self.broadcast(
+            {
+                "type": "mission_status",
+                "state": "navigating",
+                "index": 1,
+                "total": 1,
+                "message": f"following drawn path ({len(path_points) - 1} segments)",
+            }
+        )
+        self.get_logger().info(f"follow drawn path: poses={len(goal.path.poses)}")
+        if not self.follow_waypoint(goal, target, 1, 1, guard_tolerance=max(0.04, self.xy_goal_tolerance())):
+            return
+
+        final_yaw = waypoints[-1].final_yaw
+        if final_yaw is not None:
+            with self.lock:
+                raw_final = self.local_to_raw_locked(Pose2D(waypoints[-1].x, waypoints[-1].y, final_yaw))
+            self.broadcast({"type": "mission_status", "state": "turning", "index": 1, "total": 1, "message": "final alignment after drawn path"})
+            if not self.rotate_to_heading(raw_final.yaw):
+                self.publish_stop()
+                self.broadcast({"type": "mission_status", "state": "error", "message": "drawn path final alignment timed out"})
+                return
+
+        self.publish_stop()
+        self.get_logger().info("drawn path mission complete")
+        self.broadcast({"type": "mission_status", "state": "done", "message": "drawn path complete"})
+
+    def drive_segment_direct(self, target: Pose2D, index: int, total: int, direction: int) -> bool:
+        sign = 1.0 if direction >= 0 else -1.0
+        mode_text = "forward" if sign > 0 else "backward"
+        tolerance = max(0.02, self.xy_goal_tolerance())
+        desired = float(self.nav2_params.get("desired_linear_vel", 0.24))
+        speed_limit = min(DIRECT_BACKWARD_MAX_SPEED_MPS, max(0.05, desired * 0.75))
+        min_speed = min(0.055, speed_limit)
+        start_distance = self.distance_to_raw_target(target)
+        timeout_s = max(5.0, start_distance / max(0.04, speed_limit) * 4.0 + 4.0)
+        deadline = time.monotonic() + timeout_s
+
+        while rclpy.ok() and time.monotonic() < deadline and not self.cancel_requested:
+            with self.lock:
+                pose = self.raw_pose
+            if pose is None:
+                time.sleep(0.04)
+                continue
+
+            dx = target.x - pose.x
+            dy = target.y - pose.y
+            distance = math.hypot(dx, dy)
+            if distance <= tolerance:
+                self.publish_stop()
+                return True
+
+            travel_yaw = math.atan2(dy, dx)
+            desired_yaw = travel_yaw if sign > 0 else normalize_angle(travel_yaw + math.pi)
+            heading_error = normalize_angle(desired_yaw - pose.yaw)
+            cmd = Twist()
+            if abs(heading_error) < 0.55:
+                speed = min(speed_limit, max(min_speed, distance * 0.85))
+                cmd.linear.x = sign * speed
+            cmd.angular.z = max(
+                -DIRECT_BACKWARD_MAX_ANGULAR_RADPS,
+                min(DIRECT_BACKWARD_MAX_ANGULAR_RADPS, DIRECT_BACKWARD_HEADING_KP * heading_error),
+            )
+            self.cmd_pub.publish(cmd)
+            time.sleep(0.04)
+
+        self.publish_stop()
+        distance = self.distance_to_raw_target(target)
+        if self.cancel_requested:
+            self.broadcast({"type": "mission_status", "state": "stopped", "message": "mission cancelled"})
+            return False
+        if distance <= max(0.08, tolerance * 2.5):
+            self.get_logger().warn(f"{mode_text} segment {index} timed out near target: distance={distance:.3f} m")
+            return True
+        self.get_logger().error(f"mission failed: {mode_text} waypoint {index} still {distance:.3f} m away")
+        self.broadcast({"type": "mission_status", "state": "error", "message": f"{mode_text} waypoint {index} still {distance:.2f} m away"})
+        return False
+
+    def xy_goal_tolerance(self) -> float:
+        try:
+            return min(0.20, max(0.02, float(self.nav2_params.get("xy_goal_tolerance", 0.02))))
+        except (TypeError, ValueError):
+            return 0.02
 
     def follow_waypoint(
         self,
@@ -1160,6 +1312,37 @@ class DashboardBridge(Node):
             pose.pose.orientation = quat_from_yaw(path_yaw)
             path.poses.append(pose)
 
+        return path
+
+    def make_polyline_path(self, points: list[Pose2D]) -> NavPath:
+        path = NavPath()
+        path.header.frame_id = "odom"
+        path.header.stamp = self.get_clock().now().to_msg()
+        if len(points) < 2:
+            return path
+
+        last_yaw = points[0].yaw
+        for segment_index, (start, goal) in enumerate(zip(points, points[1:])):
+            dx = goal.x - start.x
+            dy = goal.y - start.y
+            distance = math.hypot(dx, dy)
+            if distance <= 1e-6:
+                continue
+            last_yaw = math.atan2(dy, dx)
+            steps = max(2, int(math.ceil(distance / 0.04)) + 1)
+            first_step = 0 if segment_index == 0 else 1
+            for i in range(first_step, steps):
+                ratio = i / (steps - 1)
+                pose = PoseStamped()
+                pose.header = path.header
+                pose.pose.position.x = start.x + dx * ratio
+                pose.pose.position.y = start.y + dy * ratio
+                pose.pose.position.z = 0.0
+                pose.pose.orientation = quat_from_yaw(last_yaw)
+                path.poses.append(pose)
+
+        if path.poses:
+            path.poses[-1].pose.orientation = quat_from_yaw(last_yaw)
         return path
 
     def wait_for_future(self, future: Any, timeout_s: float) -> Any:

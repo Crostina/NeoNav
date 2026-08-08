@@ -79,6 +79,8 @@ Current features:
 - receives live odometry from the Pi bridge
 - draws the live odometry trail while a mission is running
 - lets you click the map to add waypoints
+- lets each waypoint leg choose `forward` or `backward` travel
+- lets you draw a continuous track and send it as one Nav2 path
 - sends waypoint missions to Nav2's `/follow_path` controller action through
   the Pi bridge
 - sends stop commands through `/cmd_vel`
@@ -129,8 +131,11 @@ state. The JSON contains geometry, waypoint list, timestamp, and debug ID.
 Waypoint editing:
 
 - map clicks add checkpoints
-- selecting a checkpoint fills editable `x`, `y`, and `Final theta deg` fields
+- selecting a checkpoint fills editable `x`, `y`, `Final theta deg`, and
+  `Travel mode` fields
 - editing `x` or `y` moves the checkpoint on the map
+- `Travel mode=backward` keeps the checkpoint target position but drives the
+  segment in reverse, with robot heading opposite the travel direction
 - `Final theta deg` is optional; leave it empty when final heading does not
   matter
 - if `Final theta deg` is set, the bridge performs a final in-place alignment
@@ -398,6 +403,35 @@ check the generated `debug_runs/euroboot_debug_*_idNNNN.csv` and `.json`.
 Mission status rows and the Pi log at `/tmp/euroboot_dashboard_bridge.log`
 should identify whether the stop came from a user stop, a turn timeout, a Nav2
 goal rejection, or mission completion.
+
+## 2026-08-08 Reverse Legs And Drawn Tracks
+
+The dashboard now has two mission styles:
+
+- `Run` sends the waypoint list as guarded checkpoint legs. Each selected
+  waypoint has a `Travel mode` field, so a leg can be `forward` or `backward`.
+- `Run Track` sends the purple drawn track as one continuous `/follow_path`
+  goal. This is smoother than treating a hand-drawn curve as many checkpoints,
+  because Nav2 follows the whole polyline without stopping at every point.
+
+Reverse legs are handled by the Pi bridge with a small direct closed-loop
+driver instead of enabling Nav2 global reversing. This keeps normal forward
+checkpoint behavior unchanged and makes reverse testing easier to isolate.
+
+Ground validation in the 1 m test box:
+
+| Test | Mode | Status | Final error | Max cross-track |
+| --- | --- | --- | ---: | ---: |
+| `reverse_feature02` | one backward leg, 0.35 m | done | `0.0127 m` | `0.0095 m` |
+| `drawn_track01` | continuous 0.45 m curve | done | `0.0150 m` | `0.0151 m` |
+| `mixed_drive_modes01` | forward 0.35 m, backward home | done | `0.0162 m` | `0.0116 m` |
+
+The test runner supports these modes too:
+
+```powershell
+python tools\mission_tune_runner.py --host <pi-ip> --track mixed_forward_backward --mode waypoints --label mixed_test
+python tools\mission_tune_runner.py --host <pi-ip> --track drawn_curve --mode path --label drawn_test
+```
 
 Stop:
 

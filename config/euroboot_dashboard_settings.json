@@ -1,6 +1,6 @@
 {
   "auto_corner_heading": true,
-  "bridge_host": "192.168.137.85",
+  "bridge_host": "192.168.137.92",
   "bridge_port": "8765",
   "geometry": {
     "counts_per_rev": 1400,
@@ -32,6 +32,6 @@
     "xy_goal_tolerance": 0.02,
     "yaw_goal_tolerance": 5.28
   },
-  "next_debug_id": 70,
+  "next_debug_id": 75,
   "save_debug": true
 }

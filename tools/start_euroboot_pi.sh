@@ -6,7 +6,7 @@ ROS_SETUP="${ROS_SETUP:-/opt/ros/jazzy/setup.bash}"
 MICROROS_SETUP="${MICROROS_SETUP:-/home/maker/microros_ws/install/local_setup.bash}"
 ESP32_PORT="${ESP32_PORT:-/dev/ttyUSB0}"
 ESP32_BAUD="${ESP32_BAUD:-921600}"
-RESET_ESP32="${RESET_ESP32:-0}"
+RESET_ESP32="${RESET_ESP32:-1}"
 BRIDGE_HOST="${BRIDGE_HOST:-0.0.0.0}"
 BRIDGE_PORT="${BRIDGE_PORT:-8765}"
 LOG_DIR="${LOG_DIR:-/tmp/euroboot}"
@@ -47,22 +47,18 @@ PY
 }
 
 wait_for_odom() {
-    echo "checking /odom/unfiltered topic..."
-    for attempt in $(seq 1 5); do
-        if bash -lc "source '$ROS_SETUP'; timeout 2 ros2 topic list 2>/dev/null | grep -qx '/odom/unfiltered'"; then
-            echo "/odom/unfiltered topic is visible"
-            break
+    echo "waiting for /odom/unfiltered samples..."
+    for attempt in $(seq 1 35); do
+        if bash -lc "source '$ROS_SETUP'; timeout 2 ros2 topic echo /odom/unfiltered --once >/dev/null 2>&1"; then
+            echo "/odom/unfiltered samples are flowing"
+            return 0
         fi
-        printf "  odom wait %02d/05\r" "$attempt"
+        printf "  odom wait %02d/35\r" "$attempt"
         sleep 1
-        if [[ "$attempt" == "5" ]]; then
-            echo
-            echo "warning: /odom/unfiltered is not visible yet; continuing startup"
-            return 1
-        fi
     done
-
-    return 0
+    echo
+    echo "warning: /odom/unfiltered has no samples yet; continuing startup"
+    return 1
 }
 
 wait_for_tf() {
@@ -111,6 +107,7 @@ start_stack() {
     run_background "dashboard_bridge" \
         "source '$ROS_SETUP'; source '$MICROROS_SETUP'; python3 '$EUROBOOT_HOME/tools/euroboot_ros_bridge.py' --host '$BRIDGE_HOST' --port '$BRIDGE_PORT'"
     sleep 3
+    wait_for_tf || true
 
     run_background "nav2" \
         "source '$ROS_SETUP'; ros2 launch '$EUROBOOT_HOME/tools/nav2_minimal_odom_launch.py'"

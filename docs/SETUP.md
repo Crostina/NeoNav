@@ -174,6 +174,8 @@ The dashboard can:
 - send geometry to the bridge
 - add/edit waypoints
 - set optional final heading per waypoint
+- choose forward or backward travel per waypoint leg
+- draw a purple continuous track and run it as one Nav2 path
 - send a Nav2 mission
 - save selected debug data
 
@@ -199,6 +201,13 @@ If `/odom/unfiltered` appears late, rerun:
 
 ```bash
 ~/start_euroboot.sh restart
+```
+
+The helper now resets the ESP32 during startup by default. If you ever need to
+skip that reset for debugging:
+
+```bash
+RESET_ESP32=0 ~/start_euroboot.sh restart
 ```
 
 ### Nav2 Does Not Activate
@@ -268,6 +277,13 @@ used. For tighter corner work, use the 0.5 m square track:
 
 ```powershell
 python tools\mission_tune_runner.py --host <pi-ip> --track small_square --label small_square_test --timeout 80 --pause-after 8
+```
+
+For the newer dashboard mission modes:
+
+```powershell
+python tools\mission_tune_runner.py --host <pi-ip> --track mixed_forward_backward --mode waypoints --label mixed_drive_test --timeout 60 --pause-after 8
+python tools\mission_tune_runner.py --host <pi-ip> --track drawn_curve --mode path --label drawn_track_test --timeout 55 --pause-after 8
 ```
 
 The current best baseline is:
